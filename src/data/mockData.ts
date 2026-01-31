@@ -269,7 +269,7 @@ export const mockCourses: Course[] = [
   },
 ];
 
-// Recommendations
+// Recommendations with more thoughtful explanations
 export const mockRecommendations: Recommendation[] = [
   {
     id: 'rec-1',
@@ -277,7 +277,7 @@ export const mockRecommendations: Recommendation[] = [
     course_id: 'course-2', // CS 411
     score: 0.92,
     matched_gaps: ['SQL/Databases', 'System Design'],
-    explanation: 'Directly addresses your database skill gap and introduces system design concepts through query optimization and transaction management.',
+    explanation: 'Database Systems is foundational for any software engineering role. You\'ll learn to design schemas, optimize queries, and understand how data flows through production systems — skills that come up in almost every technical interview.',
     created_at: new Date().toISOString(),
   },
   {
@@ -286,7 +286,7 @@ export const mockRecommendations: Recommendation[] = [
     course_id: 'course-6', // ECE 391
     score: 0.88,
     matched_gaps: ['System Design'],
-    explanation: 'Deep systems understanding through OS implementation. Highly valued by top tech companies for demonstrating low-level expertise.',
+    explanation: 'This course is intense but transformative. Building an operating system from scratch gives you deep intuition about how computers actually work — exactly what senior engineers and tech leads need to debug complex systems.',
     created_at: new Date().toISOString(),
   },
   {
@@ -295,7 +295,7 @@ export const mockRecommendations: Recommendation[] = [
     course_id: 'course-4', // CS 438
     score: 0.85,
     matched_gaps: ['Distributed Systems'],
-    explanation: 'Networking fundamentals essential for distributed systems. Covers protocols used in modern cloud infrastructure.',
+    explanation: 'Understanding networking is essential for building reliable distributed systems. This course covers protocols and patterns used by every major cloud platform — knowledge that directly applies to backend engineering roles.',
     created_at: new Date().toISOString(),
   },
   {
@@ -304,7 +304,7 @@ export const mockRecommendations: Recommendation[] = [
     course_id: 'course-8', // CS 498 Cloud
     score: 0.82,
     matched_gaps: ['Distributed Systems', 'System Design'],
-    explanation: 'Modern cloud architecture and distributed systems concepts directly applicable to SWE roles at tech companies.',
+    explanation: 'Cloud computing is where modern software lives. This course teaches you to design systems that scale to millions of users — a skill that\'s become essential for software engineers at any growing company.',
     created_at: new Date().toISOString(),
   },
   {
@@ -313,7 +313,7 @@ export const mockRecommendations: Recommendation[] = [
     course_id: 'course-1', // CS 374
     score: 0.78,
     matched_gaps: ['Algorithms'],
-    explanation: 'Strengthens algorithmic thinking crucial for technical interviews. Core requirement for CS majors.',
+    explanation: 'Strong algorithmic thinking sets great engineers apart. This course builds the problem-solving foundation you\'ll use in technical interviews and when tackling complex engineering challenges at work.',
     created_at: new Date().toISOString(),
   },
   {
@@ -322,7 +322,7 @@ export const mockRecommendations: Recommendation[] = [
     course_id: 'course-7', // ECE 408
     score: 0.72,
     matched_gaps: ['System Design'],
-    explanation: 'Parallel programming skills increasingly important for performance-critical applications and ML infrastructure.',
+    explanation: 'Parallel programming is increasingly important as AI and data processing grow. Learning to write efficient GPU code opens doors to high-performance computing roles and ML infrastructure teams.',
     created_at: new Date().toISOString(),
   },
 ];
