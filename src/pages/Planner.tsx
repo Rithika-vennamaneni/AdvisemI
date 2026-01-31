@@ -20,6 +20,7 @@ const MAX_CREDITS = 16;
 export default function Planner() {
   const { toast } = useToast();
   const [plannedCourseIds, setPlannedCourseIds] = useState<string[]>([]);
+  const [boostedSkills, setBoostedSkills] = useState<string[]>([]);
   const [skillScores, setSkillScores] = useState<Record<string, number>>(() => {
     const scores: Record<string, number> = {};
     mockSkills.forEach(s => {
@@ -65,6 +66,13 @@ export default function Planner() {
     // Apply skill boosts
     const boosts = courseSkillBoosts[courseId];
     if (boosts) {
+      // Track which skills are being boosted for animation
+      const boostKeys = Object.keys(boosts);
+      setBoostedSkills(boostKeys);
+      
+      // Clear boost highlight after animation
+      setTimeout(() => setBoostedSkills([]), 1500);
+
       setSkillScores(prev => {
         const updated = { ...prev };
         Object.keys(boosts).forEach(skill => {
@@ -73,10 +81,14 @@ export default function Planner() {
         return updated;
       });
 
-      const skillNames = Object.keys(boosts).join(', ');
+      // Show percentage boost toast
+      const boostDescriptions = Object.entries(boosts)
+        .map(([skill, boost]) => `${skill} +${Math.round(boost * 100)}%`)
+        .join(', ');
+      
       toast({
         title: `Added ${course.subject} ${course.number}`,
-        description: `Strengthens: ${skillNames}`,
+        description: boostDescriptions,
       });
     } else {
       toast({
@@ -94,6 +106,11 @@ export default function Planner() {
 
     const boosts = courseSkillBoosts[courseId];
     if (boosts) {
+      // Track which skills are being reduced for animation
+      const boostKeys = Object.keys(boosts);
+      setBoostedSkills(boostKeys);
+      setTimeout(() => setBoostedSkills([]), 1500);
+
       setSkillScores(prev => {
         const updated = { ...prev };
         Object.keys(boosts).forEach(skill => {
@@ -101,11 +118,20 @@ export default function Planner() {
         });
         return updated;
       });
-    }
 
-    toast({
-      title: `Removed ${course.subject} ${course.number}`,
-    });
+      const reduceDescriptions = Object.entries(boosts)
+        .map(([skill, boost]) => `${skill} -${Math.round(boost * 100)}%`)
+        .join(', ');
+      
+      toast({
+        title: `Removed ${course.subject} ${course.number}`,
+        description: reduceDescriptions,
+      });
+    } else {
+      toast({
+        title: `Removed ${course.subject} ${course.number}`,
+      });
+    }
   }, [toast]);
 
   return (
@@ -119,6 +145,7 @@ export default function Planner() {
             dreamRole={mockProfile.dream_role}
             gapSkills={mockGapSkills}
             skillScores={skillScores}
+            boostedSkills={boostedSkills}
           />
         </section>
 
