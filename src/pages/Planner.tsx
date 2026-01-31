@@ -1,9 +1,8 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { Header } from '@/components/layout/Header';
-import { SkillGapDashboard } from '@/components/planner/SkillGapDashboard';
-import { ProgressSummary } from '@/components/planner/ProgressSummary';
-import { CourseTile } from '@/components/planner/CourseTile';
-import { SemesterPlanDropZone } from '@/components/planner/SemesterPlanDropZone';
+import { CareerProgress } from '@/components/planner/CareerProgress';
+import { CourseRecommendationCard } from '@/components/planner/CourseRecommendationCard';
+import { SemesterPlan } from '@/components/planner/SemesterPlan';
 import { 
   mockProfile,
   mockGapSkills, 
@@ -26,13 +25,9 @@ export default function Planner() {
     mockSkills.forEach(s => {
       scores[s.skill_name] = s.score;
     });
-    // Map gap skills that might have different names
     scores['SQL/Databases'] = scores['SQL'] || 0.45;
     return scores;
   });
-  const [boostedSkills, setBoostedSkills] = useState<string[]>([]);
-  const [newlyAddedId, setNewlyAddedId] = useState<string | null>(null);
-  const [matchImprovement, setMatchImprovement] = useState(0);
 
   const recommendations = getRecommendationsWithCourses();
   
@@ -46,8 +41,8 @@ export default function Planner() {
     if (plannedCourseIds.includes(courseId)) return;
     if (plannedCourseIds.length >= MAX_COURSES) {
       toast({
-        title: "Maximum courses reached",
-        description: `You can only add up to ${MAX_COURSES} courses per semester.`,
+        title: "Semester is full",
+        description: `You can add up to ${MAX_COURSES} courses per semester.`,
         variant: "destructive",
       });
       return;
@@ -58,54 +53,37 @@ export default function Planner() {
 
     if (totalCredits + course.credits > MAX_CREDITS) {
       toast({
-        title: "Credit limit exceeded",
-        description: `Adding this course would exceed the ${MAX_CREDITS} credit limit.`,
+        title: "Credit limit reached",
+        description: `This would exceed the ${MAX_CREDITS} credit limit.`,
         variant: "destructive",
       });
       return;
     }
 
     setPlannedCourseIds(prev => [...prev, courseId]);
-    setNewlyAddedId(courseId);
 
     // Apply skill boosts
     const boosts = courseSkillBoosts[courseId];
     if (boosts) {
-      const boostedSkillNames = Object.keys(boosts);
-      setBoostedSkills(boostedSkillNames);
-      
       setSkillScores(prev => {
         const updated = { ...prev };
-        let totalBoost = 0;
-        boostedSkillNames.forEach(skill => {
+        Object.keys(boosts).forEach(skill => {
           updated[skill] = Math.min(1, (updated[skill] || 0) + boosts[skill]);
-          totalBoost += Math.round(boosts[skill] * 100);
         });
-        setMatchImprovement(prev => prev + Math.round(totalBoost / boostedSkillNames.length));
         return updated;
       });
 
-      // Show toast with skill improvements
-      const boostMessages = boostedSkillNames.map(skill => 
-        `${skill} +${Math.round(boosts[skill] * 100)}%`
-      ).join(', ');
-      
+      const skillNames = Object.keys(boosts).join(', ');
       toast({
         title: `Added ${course.subject} ${course.number}`,
-        description: boostMessages,
+        description: `Strengthens: ${skillNames}`,
       });
-
-      // Clear boost highlight after animation
-      setTimeout(() => setBoostedSkills([]), 1500);
     } else {
       toast({
         title: `Added ${course.subject} ${course.number}`,
         description: course.title,
       });
     }
-
-    // Clear newly added highlight
-    setTimeout(() => setNewlyAddedId(null), 500);
   }, [plannedCourseIds, totalCredits, toast]);
 
   const removeCourse = useCallback((courseId: string) => {
@@ -114,26 +92,19 @@ export default function Planner() {
 
     setPlannedCourseIds(prev => prev.filter(id => id !== courseId));
 
-    // Reverse skill boosts
     const boosts = courseSkillBoosts[courseId];
     if (boosts) {
-      const boostedSkillNames = Object.keys(boosts);
-      
       setSkillScores(prev => {
         const updated = { ...prev };
-        let totalBoost = 0;
-        boostedSkillNames.forEach(skill => {
+        Object.keys(boosts).forEach(skill => {
           updated[skill] = Math.max(0, (updated[skill] || 0) - boosts[skill]);
-          totalBoost += Math.round(boosts[skill] * 100);
         });
-        setMatchImprovement(prev => Math.max(0, prev - Math.round(totalBoost / boostedSkillNames.length)));
         return updated;
       });
     }
 
     toast({
       title: `Removed ${course.subject} ${course.number}`,
-      description: course.title,
     });
   }, [toast]);
 
@@ -141,61 +112,53 @@ export default function Planner() {
     <div className="min-h-screen bg-background">
       <Header />
       
-      <main className="container px-4 py-6">
-        {/* Page Header */}
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold tracking-tight mb-1">
-            Plan Your Semester
-          </h1>
-          <p className="text-muted-foreground">
-            Target: <span className="font-medium text-foreground">{mockProfile.dream_role}</span>
-          </p>
-        </div>
-
-        {/* Dashboard Row */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-          <SkillGapDashboard 
-            gapSkills={mockGapSkills} 
+      <main className="container max-w-6xl px-4 py-8">
+        {/* Zone 1: Career Progress Overview */}
+        <section className="mb-12">
+          <CareerProgress 
+            dreamRole={mockProfile.dream_role}
+            gapSkills={mockGapSkills}
             skillScores={skillScores}
-            boostedSkills={boostedSkills}
           />
-          <ProgressSummary
-            coursesAdded={plannedCourseIds.length}
-            maxCourses={MAX_COURSES}
-            creditsPlanned={totalCredits}
-            maxCredits={MAX_CREDITS}
-            matchImprovement={matchImprovement}
-          />
-        </div>
+        </section>
 
-        {/* Planning Board */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Recommended Courses */}
-          <div>
-            <h2 className="text-lg font-semibold mb-4">Recommended Courses</h2>
+        {/* Zone 2 & 3: Two Column Layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
+          {/* Zone 2: Recommended Courses (Primary) */}
+          <section className="lg:col-span-3 space-y-6">
+            <div>
+              <h2 className="text-lg font-semibold mb-1">Recommended for you</h2>
+              <p className="text-sm text-muted-foreground">
+                Courses that match your career goals, ranked by relevance
+              </p>
+            </div>
+            
             <div className="space-y-4">
-              {recommendations.map((rec) => (
-                <CourseTile
+              {recommendations.map((rec, index) => (
+                <CourseRecommendationCard
                   key={rec.id}
                   course={rec.course}
                   recommendation={rec}
                   onAdd={addCourse}
                   isAdded={plannedCourseIds.includes(rec.course.id)}
+                  rank={index + 1}
                 />
               ))}
             </div>
-          </div>
+          </section>
 
-          {/* Semester Plan */}
-          <div className="lg:sticky lg:top-24 lg:self-start">
-            <SemesterPlanDropZone
-              term={mockProfile.term}
-              courses={plannedCourses}
-              onDrop={addCourse}
-              onRemove={removeCourse}
-              newlyAddedId={newlyAddedId}
-            />
-          </div>
+          {/* Zone 3: Semester Plan */}
+          <section className="lg:col-span-2">
+            <div className="lg:sticky lg:top-24">
+              <SemesterPlan
+                term={mockProfile.term}
+                courses={plannedCourses}
+                onDrop={addCourse}
+                onRemove={removeCourse}
+                maxCredits={MAX_CREDITS}
+              />
+            </div>
+          </section>
         </div>
       </main>
     </div>
