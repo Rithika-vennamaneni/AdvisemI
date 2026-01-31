@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Info, UserCheck, Pencil, Check, X } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -12,17 +12,17 @@ import {
 import { cn } from '@/lib/utils';
 import type { Skill } from '@/types/database';
 
-const SKILL_LEVELS = ['Beginner', 'Intermediate', 'Advanced', 'Expert'] as const;
-type SkillLevel = typeof SKILL_LEVELS[number];
+export const SKILL_LEVELS = ['Beginner', 'Intermediate', 'Advanced', 'Expert'] as const;
+export type SkillLevel = typeof SKILL_LEVELS[number];
 
-const scoreToLevel = (score: number): SkillLevel => {
+export const scoreToLevel = (score: number): SkillLevel => {
   if (score >= 0.85) return 'Expert';
   if (score >= 0.65) return 'Advanced';
   if (score >= 0.4) return 'Intermediate';
   return 'Beginner';
 };
 
-const levelToScore = (level: SkillLevel): number => {
+export const levelToScore = (level: SkillLevel): number => {
   switch (level) {
     case 'Expert': return 0.92;
     case 'Advanced': return 0.75;
@@ -39,9 +39,13 @@ const sliderValueToLevel = (value: number): SkillLevel => {
   return SKILL_LEVELS[Math.round(value)] || 'Intermediate';
 };
 
+export interface SkillWithLevel extends Skill {
+  expertise_level?: string;
+}
+
 interface SkillCardProps {
-  skill: Skill;
-  onUpdate: (id: string, updates: Partial<Skill>) => void;
+  skill: SkillWithLevel;
+  onUpdate: (id: string, updates: Partial<SkillWithLevel>) => void;
   onRemove: (id: string) => void;
 }
 
@@ -50,13 +54,14 @@ export function SkillCard({ skill, onUpdate, onRemove }: SkillCardProps) {
   const [editedName, setEditedName] = useState(skill.skill_name);
   const [isAdjusted, setIsAdjusted] = useState(false);
   
-  const currentLevel = scoreToLevel(skill.score);
+  // Use expertise_level if set, otherwise derive from score
+  const currentLevel: SkillLevel = (skill.expertise_level as SkillLevel) || scoreToLevel(skill.score);
   const sliderValue = levelToSliderValue(currentLevel);
 
   const handleLevelChange = (values: number[]) => {
     const newLevel = sliderValueToLevel(values[0]);
     const newScore = levelToScore(newLevel);
-    onUpdate(skill.id, { score: newScore });
+    onUpdate(skill.id, { score: newScore, expertise_level: newLevel });
     setIsAdjusted(true);
   };
 
