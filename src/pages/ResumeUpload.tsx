@@ -7,6 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import { Header } from '@/components/layout/Header';
+import { parseResumePdf } from '@/lib/resumeParserApi';
 
 export default function ResumeUpload() {
   const navigate = useNavigate();
@@ -15,6 +16,7 @@ export default function ResumeUpload() {
   const [resumeText, setResumeText] = useState('');
   const [isTextOpen, setIsTextOpen] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -44,9 +46,25 @@ export default function ResumeUpload() {
 
   const handleExtract = async () => {
     setIsExtracting(true);
-    // Simulate extraction delay
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    navigate('/skills');
+    setError(null);
+
+    try {
+      // Backend integration: PDF upload -> POST http://localhost:8000/parse
+      if (!file) {
+        throw new Error('Please upload a PDF resume to extract skills.');
+      }
+
+      const parsed = await parseResumePdf(file);
+      console.log('Parsed resume payload (frontend):', parsed);
+
+      // Backend integration: pass parsed JSON to the skills page
+      navigate('/skills', { state: { parsedResume: parsed } });
+    } catch (e) {
+      console.error('Resume parse failed:', e);
+      setError(e instanceof Error ? e.message : 'Resume parse failed');
+    } finally {
+      setIsExtracting(false);
+    }
   };
 
   const canProceed = file || resumeText.trim().length > 50;
@@ -155,6 +173,14 @@ export default function ResumeUpload() {
             We don't store the original file.
           </p>
         </div>
+
+        {error ? (
+          <Card className="mb-6 border-destructive/30 bg-destructive/5">
+            <CardContent className="p-4">
+              <p className="text-sm text-destructive">{error}</p>
+            </CardContent>
+          </Card>
+        ) : null}
 
         {/* Actions */}
         <div className="flex flex-col sm:flex-row gap-3">
