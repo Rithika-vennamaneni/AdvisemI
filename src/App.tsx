@@ -3,6 +3,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import CareerSetup from "./pages/CareerSetup";
 import ResumeUpload from "./pages/ResumeUpload";
 import SkillsReview from "./pages/SkillsReview";
 import Planner from "./pages/Planner";
@@ -18,7 +19,8 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<ResumeUpload />} />
+          <Route path="/" element={<CareerSetup />} />
+          <Route path="/upload" element={<ResumeUpload />} />
           <Route path="/skills" element={<SkillsReview />} />
           <Route path="/planner" element={<Planner />} />
           <Route path="/profile" element={<Profile />} />

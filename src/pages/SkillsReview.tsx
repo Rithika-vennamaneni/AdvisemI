@@ -175,7 +175,7 @@ export default function SkillsReview() {
 
         {/* Navigation */}
         <div className="flex items-center justify-between">
-          <Button variant="outline" onClick={() => navigate('/')}>
+          <Button variant="outline" onClick={() => navigate('/upload')}>
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Upload
           </Button>
