@@ -1,8 +1,5 @@
-import { useState } from 'react';
-import { ChevronDown, ExternalLink, Plus, Sparkles } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { Plus, Check, ArrowUpRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import type { Course, Recommendation } from '@/types/database';
 
@@ -11,7 +8,6 @@ interface CourseRecommendationCardProps {
   recommendation: Recommendation;
   onAdd: (courseId: string) => void;
   isAdded?: boolean;
-  rank: number;
 }
 
 export function CourseRecommendationCard({ 
@@ -19,109 +15,107 @@ export function CourseRecommendationCard({
   recommendation, 
   onAdd, 
   isAdded = false,
-  rank,
 }: CourseRecommendationCardProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
-
-  const matchLabel = recommendation.score >= 0.85 
-    ? 'Great match' 
-    : recommendation.score >= 0.7 
-    ? 'Good match' 
-    : 'Relevant';
+  // Generate a more human explanation based on matched gaps
+  const getHumanExplanation = () => {
+    const gaps = recommendation.matched_gaps;
+    if (gaps.length === 1) {
+      return `This course directly builds your ${gaps[0]} skills — one of the key areas for your target role.`;
+    }
+    if (gaps.length === 2) {
+      return `Covers both ${gaps[0]} and ${gaps[1]}, helping you close two skill gaps with one course.`;
+    }
+    return `Addresses multiple focus areas: ${gaps.slice(0, -1).join(', ')}, and ${gaps[gaps.length - 1]}.`;
+  };
 
   return (
     <div
       className={cn(
-        'group relative rounded-xl border bg-card p-5 transition-all duration-200',
-        'hover:shadow-sm hover:border-border/80',
-        isAdded && 'opacity-60 bg-muted/30'
+        'group relative rounded-2xl border bg-card transition-all duration-200',
+        isAdded 
+          ? 'opacity-60 bg-muted/20' 
+          : 'hover:shadow-md hover:border-primary/20'
       )}
     >
-      {/* Rank indicator */}
-      {rank <= 3 && !isAdded && (
-        <div className="absolute -top-2 -left-2 w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-semibold flex items-center justify-center shadow-sm">
-          {rank}
-        </div>
-      )}
-
-      <div className="space-y-4">
-        {/* Header */}
+      {/* Main Content */}
+      <div className="p-6 space-y-5">
+        {/* Course Header */}
         <div className="flex items-start justify-between gap-4">
-          <div className="space-y-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <h3 className="font-semibold text-base">
+          <div className="space-y-1">
+            <div className="flex items-baseline gap-3">
+              <h3 className="text-lg font-semibold">
                 {course.subject} {course.number}
               </h3>
-              <Badge variant="outline" className="text-xs font-normal">
+              <span className="text-sm text-muted-foreground">
                 {course.credits} credits
-              </Badge>
+              </span>
             </div>
-            <p className="text-muted-foreground text-sm">{course.title}</p>
+            <p className="text-muted-foreground">{course.title}</p>
           </div>
           
-          {!isAdded && (
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 text-primary flex-shrink-0">
-              <Sparkles className="w-3 h-3" />
-              <span className="text-xs font-medium">{matchLabel}</span>
+          {isAdded && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary/10 text-primary">
+              <Check className="w-4 h-4" />
+              <span className="text-sm font-medium">Added</span>
             </div>
           )}
         </div>
 
-        {/* Skills addressed */}
-        <div className="flex flex-wrap gap-1.5">
-          {recommendation.matched_gaps.map((gap) => (
-            <span
-              key={gap}
-              className="px-2.5 py-1 rounded-md bg-muted text-xs font-medium text-muted-foreground"
-            >
-              {gap}
-            </span>
-          ))}
+        {/* Skills Addressed - Primary Focus */}
+        <div className="space-y-3">
+          <p className="text-sm font-medium text-foreground">
+            Builds these skills:
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {recommendation.matched_gaps.map((gap) => (
+              <div
+                key={gap}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/5 border border-primary/10"
+              >
+                <div className="w-2 h-2 rounded-full bg-primary" />
+                <span className="text-sm font-medium text-foreground">{gap}</span>
+              </div>
+            ))}
+          </div>
         </div>
 
-        {/* Why this course */}
-        <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
-          <CollapsibleTrigger className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors">
-            <span>Why this course?</span>
-            <ChevronDown className={cn(
-              'w-4 h-4 transition-transform',
-              isExpanded && 'rotate-180'
-            )} />
-          </CollapsibleTrigger>
-          <CollapsibleContent className="pt-3">
-            <p className="text-sm text-muted-foreground leading-relaxed">
-              {recommendation.explanation}
-            </p>
-            <a
-              href={course.course_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-sm text-primary hover:underline mt-2"
-            >
-              View course details
-              <ExternalLink className="w-3 h-3" />
-            </a>
-          </CollapsibleContent>
-        </Collapsible>
+        {/* Why This Course - Always Visible */}
+        <div className="space-y-2 p-4 rounded-xl bg-muted/50">
+          <p className="text-sm font-medium text-foreground">
+            Why we recommend this
+          </p>
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            {recommendation.explanation}
+          </p>
+          <p className="text-sm text-muted-foreground leading-relaxed mt-2">
+            {getHumanExplanation()}
+          </p>
+        </div>
 
-        {/* Action */}
-        <Button
-          variant={isAdded ? 'secondary' : 'default'}
-          size="sm"
-          className="w-full"
-          onClick={() => onAdd(course.id)}
-          disabled={isAdded}
+        {/* Course Link */}
+        <a
+          href={course.course_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-primary transition-colors"
         >
-          {isAdded ? (
-            'Added to plan'
-          ) : (
-            <>
-              <Plus className="w-4 h-4 mr-1.5" />
-              Add to semester
-            </>
-          )}
-        </Button>
+          View full course details
+          <ArrowUpRight className="w-3.5 h-3.5" />
+        </a>
       </div>
+
+      {/* Action Footer */}
+      {!isAdded && (
+        <div className="px-6 pb-6">
+          <Button
+            onClick={() => onAdd(course.id)}
+            className="w-full h-12 text-base rounded-xl gap-2"
+          >
+            <Plus className="w-5 h-5" />
+            Add to my semester plan
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

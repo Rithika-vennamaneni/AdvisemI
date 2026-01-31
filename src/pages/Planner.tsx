@@ -129,19 +129,18 @@ export default function Planner() {
             <div>
               <h2 className="text-lg font-semibold mb-1">Recommended for you</h2>
               <p className="text-sm text-muted-foreground">
-                Courses that match your career goals, ranked by relevance
+                Based on your goal to become a {mockProfile.dream_role}, here are courses that will help you get there
               </p>
             </div>
             
-            <div className="space-y-4">
-              {recommendations.map((rec, index) => (
+            <div className="space-y-5">
+              {recommendations.map((rec) => (
                 <CourseRecommendationCard
                   key={rec.id}
                   course={rec.course}
                   recommendation={rec}
                   onAdd={addCourse}
                   isAdded={plannedCourseIds.includes(rec.course.id)}
-                  rank={index + 1}
                 />
               ))}
             </div>
