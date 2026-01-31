@@ -21,7 +21,7 @@ export default function CareerSetup() {
   const handleComplete = () => {
     // Store preferences (would go to context/database in production)
     console.log('Career preferences:', preferences);
-    navigate('/planner');
+    navigate('/upload');
   };
 
   return (
