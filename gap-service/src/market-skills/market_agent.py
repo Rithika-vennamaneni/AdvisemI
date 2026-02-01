@@ -190,6 +190,7 @@ import re
 import time
 from collections import defaultdict
 from typing import List, Dict, Any, Optional
+from util.keywords_gemini import get_keywords_gemini_client
 
 MAX_OUTPUT_SKILLS = 10
 
