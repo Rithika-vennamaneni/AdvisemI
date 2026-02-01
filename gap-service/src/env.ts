@@ -1,11 +1,29 @@
 import { z } from 'zod';
 
+const optionalString = z.preprocess(
+  (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+  z.string().min(1).optional()
+);
+
+const optionalUuid = z.preprocess(
+  (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+  z.string().uuid().optional()
+);
+
+const optionalEmail = z.preprocess(
+  (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+  z.string().email().optional()
+);
+
 const envSchema = z.object({
   SUPABASE_URL: z.string().url(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   GEMINI_API_KEY: z.string().min(1),
   MODEL: z.string().min(1),
-  PORT: z.string().optional()
+  PORT: optionalString,
+  DEFAULT_USER_ID: optionalUuid,
+  DEFAULT_USER_EMAIL: optionalEmail,
+  DEFAULT_USER_PASSWORD: optionalString
 });
 
 const parsed = envSchema.safeParse(process.env);

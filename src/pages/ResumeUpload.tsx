@@ -49,7 +49,7 @@ export default function ResumeUpload() {
     setError(null);
 
     try {
-      // Backend integration: PDF upload -> POST http://localhost:8000/parse
+      // Backend integration: PDF upload -> POST ${VITE_RESUME_PARSER_URL}/parse
       if (!file) {
         throw new Error('Please upload a PDF resume to extract skills.');
       }

@@ -2,7 +2,7 @@
 
 import type { ResumeParseResult } from '@/types/resumeParser';
 
-const DEFAULT_RESUME_PARSER_BASE_URL = 'http://192.168.0.203:8000';
+const DEFAULT_RESUME_PARSER_BASE_URL = 'http://localhost:8787';
 
 export class ResumeParserApiError extends Error {
   public status?: number;

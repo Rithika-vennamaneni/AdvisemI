@@ -18,6 +18,8 @@ npm run dev
 - `GEMINI_API_KEY`
 - `MODEL` (example: `gemini-1.5-flash`)
 - `PORT` (optional, default `4000`)
+- `DEFAULT_USER_ID` (optional; used if the client does not send `user_id` when parsing a resume)
+- `DEFAULT_USER_EMAIL` / `DEFAULT_USER_PASSWORD` (optional; used to create or reuse a fallback auth user if `user_id` is missing)
 
 ## Endpoint
 
@@ -53,13 +55,21 @@ Response:
 `POST /parse`
 
 - Accepts `multipart/form-data` with `file` (PDF)
+- Optional form fields: `user_id`, `run_id`, `dream_role`, `term`
 - Returns a JSON payload compatible with the frontend `ResumeParseResult` shape
 
 Example (curl):
 ```bash
 curl -X POST http://localhost:8787/parse \\
-  -F "file=@/path/to/resume.pdf"
+  -F "file=@/path/to/resume.pdf" \\
+  -F "user_id=<uuid>" \\
+  -F "dream_role=Software Engineer"
 ```
+
+## Persistence Notes
+
+- If `user_id` is provided, the parser will create or reuse a `runs` row, store the raw resume text in `documents` (type `resume`), and insert `skills` with source `resume`.
+- The operation is idempotent per `run_id` (existing resume documents and skills are replaced).
 
 ## Notes
 
