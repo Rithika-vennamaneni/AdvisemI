@@ -7,7 +7,7 @@ import { groupLearningSkills } from '../util/learningSkills.js';
 
 const requestSchema = z.object({
   user_id: z.string().uuid(),
-  run_id: z.string().uuid(),
+  run_id: z.string().uuid().optional(),
   limit: z.number().int().min(1).max(50).optional()
 });
 
@@ -116,12 +116,31 @@ export const recommendCoursesHandler = async (req: Request, res: Response): Prom
   }
 
   const { user_id, run_id, limit = 10 } = parsed.data;
+  let resolvedRunId = run_id ?? null;
 
   try {
+    if (!resolvedRunId) {
+      const { data: latestRun, error: latestError } = await supabase
+        .from('runs')
+        .select('id, term')
+        .eq('user_id', user_id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (latestError) {
+        throw new Error(`Failed to fetch latest run: ${latestError.message}`);
+      }
+      if (!latestRun?.id) {
+        res.status(400).json({ error: 'run_id is required when no runs exist' });
+        return;
+      }
+      resolvedRunId = latestRun.id;
+    }
+
     const { data: run, error: runError } = await supabase
       .from('runs')
       .select('id, term')
-      .eq('id', run_id)
+      .eq('id', resolvedRunId)
       .eq('user_id', user_id)
       .maybeSingle();
 
@@ -141,7 +160,6 @@ export const recommendCoursesHandler = async (req: Request, res: Response): Prom
       .from('gap_skills')
       .select('skill_name, priority')
       .eq('user_id', user_id)
-      .eq('run_id', run_id)
       .order('priority', { ascending: true })
       .limit(15);
 
@@ -149,16 +167,17 @@ export const recommendCoursesHandler = async (req: Request, res: Response): Prom
       throw new Error(`Failed to fetch gap skills: ${gapError.message}`);
     }
 
-    const gaps = (gapSkills ?? [])
+    let gaps = (gapSkills ?? [])
       .filter((gap) => Boolean(gap.skill_name))
       .map((gap) => ({
         skill_name: gap.skill_name as string,
         priority: gap.priority
       }));
+
     logger.info('Gap skills fetched for recommendations', { count: gaps.length });
 
     if (gaps.length === 0) {
-      res.status(200).json({ user_id, run_id, inserted_count: 0, recommendations: [] });
+      res.status(200).json({ user_id, run_id: resolvedRunId, inserted_count: 0, recommendations: [] });
       return;
     }
 
@@ -256,16 +275,18 @@ export const recommendCoursesHandler = async (req: Request, res: Response): Prom
       })
       .slice(0, limit);
 
-    await supabase
+    const { error: deleteError } = await supabase
       .from('recommendations')
       .delete()
-      .eq('user_id', user_id)
-      .eq('run_id', run_id);
+      .eq('user_id', user_id);
+
+    if (deleteError) {
+      throw new Error(`Failed to clear existing recommendations: ${deleteError.message}`);
+    }
 
     if (ranked.length > 0) {
       const rows = ranked.map((item) => ({
         user_id,
-        run_id,
         course_id: item.course.id,
         score: item.score,
         matched_gaps: item.matched_gaps,
@@ -285,7 +306,7 @@ export const recommendCoursesHandler = async (req: Request, res: Response): Prom
 
     res.status(200).json({
       user_id,
-      run_id,
+      run_id: resolvedRunId,
       inserted_count: ranked.length,
       recommendations: ranked.map((item) => ({
         course: {

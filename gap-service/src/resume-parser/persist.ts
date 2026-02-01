@@ -18,13 +18,11 @@ type CreateRunInput = {
 
 type SaveDocumentInput = {
   user_id: string;
-  run_id: string;
   raw_text: string;
 };
 
 type SaveSkillsInput = {
   user_id: string;
-  run_id: string;
   dream_role?: string | null;
   skills: ResumeSkillInput[];
 };
@@ -81,13 +79,12 @@ export const createOrGetRun = async (input: CreateRunInput): Promise<string> => 
 };
 
 export const saveResumeDocument = async (input: SaveDocumentInput): Promise<void> => {
-  const { user_id, run_id, raw_text } = input;
+  const { user_id, raw_text } = input;
 
   const { error: deleteError } = await supabase
     .from('documents')
     .delete()
     .eq('user_id', user_id)
-    .eq('run_id', run_id)
     .eq('type', 'resume');
 
   if (deleteError) {
@@ -98,7 +95,6 @@ export const saveResumeDocument = async (input: SaveDocumentInput): Promise<void
     .from('documents')
     .insert({
       user_id,
-      run_id,
       type: 'resume',
       raw_text
     });
@@ -127,7 +123,7 @@ const dedupeSkills = (skills: ResumeSkillInput[]): ResumeSkillInput[] => {
 };
 
 export const saveResumeSkills = async (input: SaveSkillsInput): Promise<number> => {
-  const { user_id, run_id, dream_role, skills } = input;
+  const { user_id, dream_role, skills } = input;
   const uniqueSkills = dedupeSkills(skills);
 
   const { error: deleteError } = await supabase
@@ -146,7 +142,6 @@ export const saveResumeSkills = async (input: SaveSkillsInput): Promise<number> 
 
   const rows = uniqueSkills.map((skill) => ({
     user_id,
-    run_id,
     source: 'resume',
     skill_name: skill.skill_name,
     score: skill.score ?? null,

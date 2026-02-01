@@ -141,43 +141,20 @@ const fetchJobs = async (dreamRole: string, maxResults: number): Promise<AdzunaJ
   }
 };
 
-const isMissingRunIdColumn = (message: string | undefined): boolean => {
-  if (!message) return false;
-  const lower = message.toLowerCase();
-  return (
-    lower.includes('run_id') &&
-    (lower.includes('does not exist') || lower.includes('could not find') || lower.includes('schema cache'))
-  );
-};
-
-const deleteExistingMarketSkills = async (userId: string, runId: string): Promise<void> => {
+const deleteExistingMarketSkills = async (userId: string): Promise<void> => {
   const { error } = await supabase
     .from('skills')
     .delete()
     .eq('user_id', userId)
-    .eq('source', 'market')
-    .eq('run_id', runId);
+    .eq('source', 'market');
 
   if (error) {
-    if (isMissingRunIdColumn(error.message)) {
-      logger.warn('skills.run_id column missing, deleting market skills by user_id only', { error: error.message });
-      const { error: fallback } = await supabase
-        .from('skills')
-        .delete()
-        .eq('user_id', userId)
-        .eq('source', 'market');
-      if (fallback) {
-        throw new Error(`Failed to clear market skills (fallback): ${fallback.message}`);
-      }
-      return;
-    }
     throw new Error(`Failed to clear market skills: ${error.message}`);
   }
 };
 
 const insertMarketSkills = async (
   userId: string,
-  runId: string,
   dreamRole: string,
   rows: Array<{ skill_name: string; score: number; evidence: string | null }>
 ): Promise<number> => {
@@ -185,7 +162,6 @@ const insertMarketSkills = async (
 
   const insertRows = rows.map((row) => ({
     user_id: userId,
-    run_id: runId,
     source: 'market',
     dream_role: dreamRole,
     skill_name: row.skill_name,
@@ -195,48 +171,20 @@ const insertMarketSkills = async (
 
   const { error } = await supabase.from('skills').insert(insertRows);
   if (error) {
-    if (isMissingRunIdColumn(error.message)) {
-      logger.warn('skills.run_id column missing, inserting market skills without run_id', { error: error.message });
-      const fallbackRows = rows.map((row) => ({
-        user_id: userId,
-        source: 'market',
-        dream_role: dreamRole,
-        skill_name: row.skill_name,
-        score: row.score,
-        evidence: row.evidence,
-      }));
-      const { error: fallback } = await supabase.from('skills').insert(fallbackRows);
-      if (fallback) {
-        throw new Error(`Failed to insert market skills (fallback): ${fallback.message}`);
-      }
-      return fallbackRows.length;
-    }
     throw new Error(`Failed to insert market skills: ${error.message}`);
   }
 
   return insertRows.length;
 };
 
-const countMarketSkills = async (userId: string, runId: string): Promise<number> => {
+const countMarketSkills = async (userId: string): Promise<number> => {
   const { count, error } = await supabase
     .from('skills')
     .select('id', { count: 'exact', head: true })
     .eq('user_id', userId)
-    .eq('source', 'market')
-    .eq('run_id', runId);
+    .eq('source', 'market');
 
   if (error) {
-    if (isMissingRunIdColumn(error.message)) {
-      const { count: fallbackCount, error: fallbackError } = await supabase
-        .from('skills')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', userId)
-        .eq('source', 'market');
-      if (fallbackError) {
-        throw new Error(`Failed to count market skills (fallback): ${fallbackError.message}`);
-      }
-      return fallbackCount ?? 0;
-    }
     throw new Error(`Failed to count market skills: ${error.message}`);
   }
 
@@ -295,8 +243,8 @@ const fetchDreamRole = async (userId: string): Promise<string | null> => {
   return data?.dream_role ?? null;
 };
 
-export const ensureMarketSkills = async (userId: string, runId: string): Promise<MarketSkillResult> => {
-  const existing = await countMarketSkills(userId, runId);
+export const ensureMarketSkills = async (userId: string): Promise<MarketSkillResult> => {
+  const existing = await countMarketSkills(userId);
   if (existing > 0) {
     logger.info('Market skills already exist', { user_id: userId, count: existing });
     return { inserted: 0, skipped: true };
@@ -329,8 +277,8 @@ export const ensureMarketSkills = async (userId: string, runId: string): Promise
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX_SKILLS);
 
-  await deleteExistingMarketSkills(userId, runId);
-  const inserted = await insertMarketSkills(userId, runId, dreamRole, rows);
+  await deleteExistingMarketSkills(userId);
+  const inserted = await insertMarketSkills(userId, dreamRole, rows);
   logger.info('Market skills inserted', { inserted });
 
   return { inserted, skipped: false };

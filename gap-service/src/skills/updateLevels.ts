@@ -10,7 +10,7 @@ const updateSchema = z.object({
 
 const requestSchema = z.object({
   user_id: z.string().uuid(),
-  run_id: z.string().uuid(),
+  run_id: z.string().uuid().optional(),
   updates: z.array(updateSchema).min(1)
 });
 
@@ -21,21 +21,20 @@ export const updateSkillLevelsHandler = async (req: Request, res: Response): Pro
     return;
   }
 
-  const { user_id, run_id, updates } = parsed.data;
+  const { user_id, updates } = parsed.data;
 
   const updated: Array<{ skill_name: string; expertise_level: string }> = [];
   const notFound: string[] = [];
 
   for (const update of updates) {
-    const { data, error } = await supabase
+    const query = supabase
       .from('skills')
       .update({ expertise_level: update.expertise_level })
       .eq('user_id', user_id)
-      .eq('run_id', run_id)
       .eq('source', 'resume')
-      .eq('skill_name', update.skill_name)
-      .select('skill_name, expertise_level');
+      .eq('skill_name', update.skill_name);
 
+    const { data, error } = await query.select('skill_name, expertise_level');
     if (error) {
       logger.error('Failed to update skill level', { error: error.message, skill_name: update.skill_name });
       continue;
@@ -54,7 +53,6 @@ export const updateSkillLevelsHandler = async (req: Request, res: Response): Pro
 
   logger.info('Skill level updates processed', {
     user_id,
-    run_id,
     updated_count: updated.length,
     not_found_count: notFound.length
   });

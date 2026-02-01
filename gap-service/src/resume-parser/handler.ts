@@ -10,6 +10,8 @@ import { supabase } from '../util/supabase.js';
 import type { ResumeParseResult } from './types.js';
 import { groupLearningSkills } from '../util/learningSkills.js';
 import { normalizeSkillName } from '../util/strings.js';
+import { ensureMarketSkills } from '../market-skills/agent.js';
+import { runGapAnalysisInternal } from '../gap/handler.js';
 
 const isPdf = (mimetype?: string): boolean => {
   if (!mimetype) return false;
@@ -121,7 +123,6 @@ export const parseResumeHandler = async (req: Request, res: Response): Promise<v
 
       await saveResumeDocument({
         user_id: resolvedUserId,
-        run_id: resolvedRunId,
         raw_text: text
       });
 
@@ -129,12 +130,54 @@ export const parseResumeHandler = async (req: Request, res: Response): Promise<v
 
       const skillsSaved = await saveResumeSkills({
         user_id: resolvedUserId,
-        run_id: resolvedRunId,
         dream_role: resolvedRole,
         skills: skillRows
       });
 
+      logger.info('Resume skills persisted', {
+        user_id: resolvedUserId,
+        run_id: resolvedRunId,
+        skills_saved: skillsSaved
+      });
+
       saved = { run_id: resolvedRunId, documents_saved: 1, skills_saved: skillsSaved };
+
+      if (resolvedRole && resolvedRole.trim().length > 0) {
+        logger.info('Triggering gap analysis after resume parse', {
+          user_id: resolvedUserId,
+          run_id: resolvedRunId,
+          dream_role: resolvedRole
+        });
+        try {
+          await ensureMarketSkills(resolvedUserId);
+        } catch (error) {
+          logger.warn('Market skill extraction failed during resume parse', {
+            error: error instanceof Error ? error.message : 'Unknown error'
+          });
+        }
+
+        try {
+          const gapResult = await runGapAnalysisInternal({
+            user_id: resolvedUserId,
+            run_id: resolvedRunId,
+            limit: 10
+          });
+          logger.info('Gap analysis completed after resume parse', {
+            user_id: resolvedUserId,
+            run_id: gapResult.run_id,
+            inserted_count: gapResult.inserted_count
+          });
+        } catch (error) {
+          logger.warn('Gap analysis failed after resume parse', {
+            error: error instanceof Error ? error.message : 'Unknown error'
+          });
+        }
+      } else {
+        logger.warn('Skipping gap analysis after resume parse (missing dream_role)', {
+          user_id: resolvedUserId,
+          run_id: resolvedRunId
+        });
+      }
     } else {
       logger.warn('Resume parsed without persistence (missing user_id)');
       res.status(400).json({ detail: 'user_id is required to persist resume data' });

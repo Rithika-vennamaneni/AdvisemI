@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Request, Response } from 'express';
+import { randomUUID } from 'crypto';
 import { supabase } from '../util/supabase.js';
 import { logger } from '../util/logger.js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -15,20 +16,11 @@ import { runGapAnalysisInternal } from '../gap/handler.js';
 
 const requestSchema = z.object({
   user_id: z.string().uuid(),
-  run_id: z.string().uuid(),
+  run_id: z.string().uuid().optional(),
   year: z.string().regex(/^\d{4}$/),
   semester: z.enum(['spring', 'summer', 'fall']),
   limit: z.number().int().min(1).max(50).optional().default(20),
 });
-
-const isMissingRunIdColumn = (message: string | undefined): boolean => {
-  if (!message) return false;
-  const lower = message.toLowerCase();
-  return (
-    lower.includes('run_id') &&
-    (lower.includes('does not exist') || lower.includes('could not find') || lower.includes('schema cache'))
-  );
-};
 
 const listAvailableModels = async (): Promise<string[]> => {
   const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${env.GEMINI_API_KEY}`;
@@ -120,37 +112,18 @@ const buildFallbackMatch = (course: UIUCCourse, gapSkills: GapSkill[]): CourseMa
   };
 };
 
-const fetchGapSkills = async (userId: string, runId: string): Promise<GapSkill[]> => {
+const fetchGapSkills = async (userId: string): Promise<GapSkill[]> => {
   const { data, error } = await supabase
-    .from('gap_skills')
-    .select('id, user_id, skill_name, priority, reason, run_id')
-    .eq('user_id', userId)
-    .eq('run_id', runId)
-    .order('priority', { ascending: true });
-
-  if (error) {
-    if (isMissingRunIdColumn(error.message)) {
-      logger.warn('gap_skills.run_id column missing, falling back to user_id only', { error: error.message });
-    } else {
-      throw new Error(`Failed to fetch gap skills: ${error.message}`);
-    }
-  }
-
-  if (data && data.length > 0) {
-    return data as GapSkill[];
-  }
-
-  const { data: fallback, error: fallbackError } = await supabase
     .from('gap_skills')
     .select('id, user_id, skill_name, priority, reason')
     .eq('user_id', userId)
     .order('priority', { ascending: true });
 
-  if (fallbackError) {
-    throw new Error(`Failed to fetch gap skills (fallback): ${fallbackError.message}`);
+  if (error) {
+    throw new Error(`Failed to fetch gap skills: ${error.message}`);
   }
 
-  return (fallback || []) as GapSkill[];
+  return (data || []) as GapSkill[];
 };
 
 const selectRelevantSubjects = async (gapSkills: GapSkill[]): Promise<string[]> => {
@@ -252,7 +225,6 @@ const upsertCourse = async (course: UIUCCourse, year: string, semester: string):
 
 const insertRecommendations = async (
   userId: string,
-  runId: string,
   recommendations: Array<{
     courseId: string;
     score: number;
@@ -266,7 +238,6 @@ const insertRecommendations = async (
 
   const rows = recommendations.map((rec) => ({
     user_id: userId,
-    run_id: runId,
     course_id: rec.courseId,
     score: rec.score,
     matched_gaps: rec.matchedGaps,
@@ -276,44 +247,17 @@ const insertRecommendations = async (
   const { error } = await supabase.from('recommendations').insert(rows);
 
   if (error) {
-    if (isMissingRunIdColumn(error.message)) {
-      logger.warn('recommendations.run_id column missing, inserting without run_id', { error: error.message });
-      const fallbackRows = recommendations.map((rec) => ({
-        user_id: userId,
-        course_id: rec.courseId,
-        score: rec.score,
-        matched_gaps: rec.matchedGaps,
-        explanation: rec.explanation,
-      }));
-      const { error: fallbackError } = await supabase.from('recommendations').insert(fallbackRows);
-      if (fallbackError) {
-        throw new Error(`Failed to insert recommendations (fallback): ${fallbackError.message}`);
-      }
-      return;
-    }
     throw new Error(`Failed to insert recommendations: ${error.message}`);
   }
 };
 
-const deleteExistingRecommendations = async (userId: string, runId: string): Promise<void> => {
+const deleteExistingRecommendations = async (userId: string): Promise<void> => {
   const { error } = await supabase
     .from('recommendations')
     .delete()
-    .eq('user_id', userId)
-    .eq('run_id', runId);
+    .eq('user_id', userId);
 
   if (error) {
-    if (isMissingRunIdColumn(error.message)) {
-      logger.warn('recommendations.run_id column missing, deleting by user_id only', { error: error.message });
-      const { error: fallbackError } = await supabase
-        .from('recommendations')
-        .delete()
-        .eq('user_id', userId);
-      if (fallbackError) {
-        logger.warn('Failed to delete existing recommendations (fallback)', { error: fallbackError.message });
-      }
-      return;
-    }
     logger.warn('Failed to delete existing recommendations', { error: error.message });
     // Don't throw - continue with insertion
   }
@@ -327,28 +271,29 @@ export const generateCourseRecommendations = async (req: Request, res: Response)
   }
 
   const { user_id, run_id, year, semester, limit }: CourseRecommendationRequest = parsed.data;
+  const resolvedRunId = run_id ?? randomUUID();
 
   try {
-    logger.info('Starting course recommendation generation', { user_id, run_id, year, semester });
+    logger.info('Starting course recommendation generation', { user_id, run_id: resolvedRunId, year, semester });
 
     // Step 1: Ensure market skills (if missing) and run gap analysis if needed
     try {
-      await ensureMarketSkills(user_id, run_id);
+      await ensureMarketSkills(user_id);
     } catch (error) {
       logger.warn('Market skill extraction skipped', { error: error instanceof Error ? error.message : 'Unknown' });
     }
 
-    let gapSkills = await fetchGapSkills(user_id, run_id);
+    let gapSkills = await fetchGapSkills(user_id);
     if (gapSkills.length === 0) {
-      await runGapAnalysisInternal({ user_id, run_id, limit: 15 });
-      gapSkills = await fetchGapSkills(user_id, run_id);
+      await runGapAnalysisInternal({ user_id, run_id: resolvedRunId, limit: 15 });
+      gapSkills = await fetchGapSkills(user_id);
     }
 
     // Step 2: Fetch gap skills
     if (gapSkills.length === 0) {
       res.status(200).json({
         user_id,
-        run_id,
+        run_id: resolvedRunId,
         courses_found: 0,
         recommendations_created: 0,
         recommendations: [],
@@ -363,7 +308,7 @@ export const generateCourseRecommendations = async (req: Request, res: Response)
     if (relevantSubjects.length === 0) {
       res.status(200).json({
         user_id,
-        run_id,
+        run_id: resolvedRunId,
         courses_found: 0,
         recommendations_created: 0,
         recommendations: [],
@@ -384,7 +329,7 @@ export const generateCourseRecommendations = async (req: Request, res: Response)
     if (allCourses.length === 0) {
       res.status(200).json({
         user_id,
-        run_id,
+        run_id: resolvedRunId,
         courses_found: 0,
         recommendations_created: 0,
         recommendations: [],
@@ -425,7 +370,7 @@ export const generateCourseRecommendations = async (req: Request, res: Response)
     logger.info('Storing courses and recommendations', { count: rankedMatches.length });
 
     // Delete existing recommendations first
-    await deleteExistingRecommendations(user_id, run_id);
+    await deleteExistingRecommendations(user_id);
 
     // Upsert courses and collect course IDs
     const courseIdPromises = rankedMatches.map((item) =>
@@ -441,7 +386,7 @@ export const generateCourseRecommendations = async (req: Request, res: Response)
       explanation: item.match.explanation,
     }));
 
-    await insertRecommendations(user_id, run_id, recommendationsToInsert);
+    await insertRecommendations(user_id, recommendationsToInsert);
 
     logger.info('Course recommendations generated successfully', {
       coursesFound: allCourses.length,
@@ -451,7 +396,7 @@ export const generateCourseRecommendations = async (req: Request, res: Response)
     // Step 8: Return response
     const response: CourseRecommendationResponse = {
       user_id,
-      run_id,
+      run_id: resolvedRunId,
       courses_found: allCourses.length,
       recommendations_created: recommendationsToInsert.length,
       recommendations: rankedMatches.map((item, index) => ({
@@ -470,7 +415,7 @@ export const generateCourseRecommendations = async (req: Request, res: Response)
     res.status(200).json(response);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    logger.error('Course recommendation generation failed', { error: message, user_id, run_id });
+    logger.error('Course recommendation generation failed', { error: message, user_id, run_id: resolvedRunId });
     res.status(500).json({ error: 'Course recommendation generation failed', message });
   }
 };
