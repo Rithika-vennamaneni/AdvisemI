@@ -13,11 +13,23 @@ const parser = new XMLParser({
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const subjectsCache = new Map<string, { expiresAt: number; data: UIUCSubject[] }>();
+const coursesCache = new Map<string, { expiresAt: number; data: UIUCCourse[] }>();
+const inflight = new Map<string, Promise<string>>();
+
+const getCacheKey = (...parts: string[]): string => parts.join(':');
+
 const fetchWithRetry = async (
   url: string,
   maxRetries = 3,
   retryDelay = 1000
 ): Promise<string> => {
+  const cached = inflight.get(url);
+  if (cached) {
+    return cached;
+  }
+  const request = (async () => {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const response = await fetch(url, {
@@ -47,9 +59,22 @@ const fetchWithRetry = async (
     }
   }
   throw new Error('Max retries exceeded');
+  })();
+  inflight.set(url, request);
+  try {
+    return await request;
+  } finally {
+    inflight.delete(url);
+  }
 };
 
 export const fetchSubjects = async (year: string, semester: string): Promise<UIUCSubject[]> => {
+  const cacheKey = getCacheKey('subjects', year, semester);
+  const cached = subjectsCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
+  }
+
   const url = `${BASE_URL}/catalog/${year}/${semester}.xml?mode=summary`;
   logger.info('Fetching subjects from UIUC API', { year, semester, url });
 
@@ -86,6 +111,7 @@ export const fetchSubjects = async (year: string, semester: string): Promise<UIU
     }
 
     logger.info('Fetched subjects', { count: subjects.length, year, semester });
+    subjectsCache.set(cacheKey, { data: subjects, expiresAt: Date.now() + CACHE_TTL_MS });
     return subjects;
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -99,6 +125,12 @@ export const fetchCoursesForSubject = async (
   semester: string,
   subjectCode: string
 ): Promise<UIUCCourse[]> => {
+  const cacheKey = getCacheKey('courses', year, semester, subjectCode);
+  const cached = coursesCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
+  }
+
   const url = `${BASE_URL}/catalog/${year}/${semester}/${subjectCode}.xml?mode=cascade`;
   logger.info('Fetching courses for subject', { year, semester, subjectCode, url });
 
@@ -174,6 +206,7 @@ export const fetchCoursesForSubject = async (
       year, 
       semester 
     });
+    coursesCache.set(cacheKey, { data: courses, expiresAt: Date.now() + CACHE_TTL_MS });
     return courses;
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';

@@ -1,10 +1,9 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { env } from '../env.js';
 import { logger } from '../util/logger.js';
 import { safeJsonParse } from '../util/json.js';
 import { canonicalMarketSchema } from './schema.js';
 import { buildGapPrompt } from './gapPrompt.js';
 import type { GeminiCanonicalMarket, MarketSkillDistinct, ResumeSkill } from '../gap/types.js';
+import { runOpenAI } from '../util/openai.js';
 
 type GeminiInput = {
   resumeSkills: ResumeSkill[];
@@ -39,45 +38,24 @@ const validateOutput = (
   return { ok: true, value: output };
 };
 
-const callModel = async (prompt: string): Promise<string> => {
-  const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: env.MODEL });
-  const result = await model.generateContent(prompt);
-  return result.response.text();
-};
-
 export const runGeminiGapAnalysis = async (input: GeminiInput): Promise<GeminiCanonicalMarket> => {
   const prompt = buildGapPrompt(input.resumeSkills, input.marketSkills, { strict: false });
-  const responseText = await callModel(prompt);
+  const responseText = await runOpenAI({
+    input: prompt,
+    jsonObject: true,
+    maxOutputTokens: 1200,
+    temperature: 0.2
+  });
   const parsed = safeJsonParse<GeminiCanonicalMarket>(responseText);
   if (parsed.ok) {
     const validated = validateOutput(parsed.value, input.marketSkills.length, input.marketSkillInputSet);
     if (validated.ok) {
-      logger.info('Gemini output validated', { stage: 'initial' });
+      logger.info('OpenAI output validated', { stage: 'initial' });
       return validated.value;
     }
-    logger.warn('Gemini validation failed', { stage: 'initial', error: validated.error });
+    logger.warn('OpenAI validation failed', { stage: 'initial', error: validated.error });
   } else {
-    logger.warn('Gemini JSON parse failed', { stage: 'initial', error: parsed.error });
+    logger.warn('OpenAI JSON parse failed', { stage: 'initial', error: parsed.error });
   }
-
-  const retryPrompt = buildGapPrompt(input.resumeSkills, input.marketSkills, {
-    strict: true,
-    priorError: parsed.ok ? 'Validation failed' : parsed.error
-  });
-  const retryText = await callModel(retryPrompt);
-  const retryParsed = safeJsonParse<GeminiCanonicalMarket>(retryText);
-  if (!retryParsed.ok) {
-    throw new Error(`Gemini JSON parse failed after retry: ${retryParsed.error}`);
-  }
-  const retryValidated = validateOutput(
-    retryParsed.value,
-    input.marketSkills.length,
-    input.marketSkillInputSet
-  );
-  if (!retryValidated.ok) {
-    throw new Error(`Gemini validation failed after retry: ${retryValidated.error}`);
-  }
-  logger.info('Gemini output validated', { stage: 'retry' });
-  return retryValidated.value;
+  throw new Error('OpenAI gap analysis output invalid');
 };

@@ -6,7 +6,8 @@ import { preprocessSkills } from './preprocess.js';
 import { runGeminiGapAnalysis } from '../gemini/client.js';
 import { computeGapsDeterministic, computeGapsFromGemini, orderAndLimitGaps } from './analysis.js';
 import type { MarketSkillRow, ResumeSkillRow } from './types.js';
-import { normalizeSkillName } from '../util/strings.js';
+import { normalizeSkillName, trimSkillName } from '../util/strings.js';
+import { getRoleSkillFallback } from '../util/roleSkills.js';
 import { createOrGetRun } from '../resume-parser/persist.js';
 
 const requestSchema = z.object({
@@ -50,6 +51,51 @@ const fetchMarketSkills = async (userId: string): Promise<MarketSkillRow[]> => {
   }
 
   return data ?? [];
+};
+
+const fetchDreamRole = async (userId: string): Promise<string | null> => {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('dream_role')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to fetch dream_role: ${error.message}`);
+  }
+
+  return data?.dream_role ?? null;
+};
+
+const tokenize = (value: string): string[] => {
+  return (value ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3);
+};
+
+const filterMarketSkillsByRole = (
+  marketRows: MarketSkillRow[],
+  fallbackSkills: string[]
+): MarketSkillRow[] => {
+  if (fallbackSkills.length === 0) return marketRows;
+
+  const fallbackSet = new Set(fallbackSkills.map((skill) => normalizeSkillName(skill)));
+  const fallbackTokens = new Set<string>();
+  fallbackSkills.forEach((skill) => {
+    tokenize(skill).forEach((token) => fallbackTokens.add(token));
+  });
+
+  return marketRows.filter((row) => {
+    const name = trimSkillName(row.skill_name ?? '');
+    if (!name) return false;
+    const normalized = normalizeSkillName(name);
+    if (fallbackSet.has(normalized)) return true;
+    const tokens = tokenize(name);
+    return tokens.some((token) => fallbackTokens.has(token));
+  });
 };
 
 const deleteExistingGaps = async (userId: string): Promise<void> => {
@@ -99,16 +145,88 @@ const dedupeGaps = (
   return output;
 };
 
+const normalizeGapPriorities = (
+  gaps: Array<{ skill_name: string; priority: number; reason: string }>
+): Array<{ skill_name: string; priority: number; reason: string }> => {
+  if (gaps.length <= 1) return gaps;
+  const first = gaps[0]?.priority ?? 1;
+  const allSame = gaps.every((gap) => gap.priority === first);
+  if (!allSame) return gaps;
+
+  const total = gaps.length - 1;
+  return gaps.map((gap, index) => {
+    const scaled = total === 0 ? 1 : 1 + Math.round((index / total) * 4);
+    const priority = Math.max(1, Math.min(5, scaled));
+    return { ...gap, priority };
+  });
+};
+
 export const runGapAnalysisInternal = async (input: GapAnalysisRequest): Promise<GapResponse> => {
   const { user_id, run_id, limit = 10 } = input;
   const resolvedRunId = await createOrGetRun({ user_id, run_id });
 
   logger.info('Gap analysis run resolved', { user_id, run_id: resolvedRunId });
 
-  const [resumeRows, marketRows] = await Promise.all([
+  const [resumeRows, marketRowsInitial] = await Promise.all([
     fetchResumeSkills(user_id),
     fetchMarketSkills(user_id)
   ]);
+
+  let marketRows = marketRowsInitial;
+  try {
+    const dreamRole = await fetchDreamRole(user_id);
+    const fallbackSkills = getRoleSkillFallback(dreamRole);
+    if (fallbackSkills.length > 0) {
+      const filtered = filterMarketSkillsByRole(marketRows, fallbackSkills);
+      if (filtered.length > 0 && filtered.length < marketRows.length) {
+        logger.info('Filtered market skills to role relevant set', {
+          user_id,
+          dream_role: dreamRole,
+          before: marketRows.length,
+          after: filtered.length
+        });
+        marketRows = filtered;
+      }
+    }
+  } catch (error) {
+    logger.warn('Role-based market skill filtering failed', {
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+
+  if (marketRows.length < 3) {
+    try {
+      const dreamRole = await fetchDreamRole(user_id);
+      const fallbackSkills = getRoleSkillFallback(dreamRole);
+      if (fallbackSkills.length > 0) {
+        const existing = new Set(
+          marketRows
+            .map((row) => normalizeSkillName(row.skill_name ?? ''))
+            .filter((name) => name.length > 0)
+        );
+        const additional = fallbackSkills
+          .map((skill) => trimSkillName(skill))
+          .filter((skill) => skill.length > 0 && !existing.has(normalizeSkillName(skill)))
+          .map((skill) => ({
+            skill_name: skill,
+            score: 0.65,
+            evidence: 'role-fallback'
+          }));
+        if (additional.length > 0) {
+          marketRows = [...marketRows, ...additional];
+          logger.info('Augmented market skills with role fallback', {
+            user_id,
+            dream_role: dreamRole,
+            added_count: additional.length
+          });
+        }
+      }
+    } catch (error) {
+      logger.warn('Role fallback market skills failed', {
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
 
   logger.info('Fetched skills', {
     resume_count: resumeRows.length,
@@ -151,7 +269,7 @@ export const runGapAnalysisInternal = async (input: GapAnalysisRequest): Promise
     reason: gap.reason
   }));
 
-  const uniqueGaps = dedupeGaps(limitedGaps);
+  const uniqueGaps = normalizeGapPriorities(dedupeGaps(limitedGaps));
 
   await deleteExistingGaps(user_id);
   await insertGaps(user_id, uniqueGaps);

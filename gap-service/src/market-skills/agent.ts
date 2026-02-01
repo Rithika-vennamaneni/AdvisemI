@@ -1,16 +1,23 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { env } from '../env.js';
 import { logger } from '../util/logger.js';
 import { supabase } from '../util/supabase.js';
 import { normalizeSkillName, toPreferredTitleCase, trimSkillName } from '../util/strings.js';
+import { runOpenAI } from '../util/openai.js';
 
 export type MarketSkillResult = {
   inserted: number;
   skipped: boolean;
 };
 
-const MAX_JOBS = 8;
-const MAX_SKILLS = 10;
+const toPositiveInt = (value: string | undefined, fallback: number): number => {
+  if (!value) return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.floor(parsed);
+};
+
+const MAX_JOBS = toPositiveInt(env.MARKET_SKILL_MAX_JOBS, 4);
+const MAX_SKILLS = toPositiveInt(env.MARKET_SKILL_MAX_SKILLS, 10);
 
 const MARKET_SKILL_PROMPT = (jobDescription: string): string => {
   return [
@@ -54,54 +61,6 @@ const extractJsonArray = (text: string): string[] => {
     .map((item) => (typeof item === 'string' ? item : String(item)))
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
-};
-
-const listAvailableModels = async (): Promise<string[]> => {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${env.GEMINI_API_KEY}`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 6000);
-  try {
-    const res = await fetch(url, { signal: controller.signal });
-    if (!res.ok) {
-      throw new Error(`ListModels failed (${res.status})`);
-    }
-    const data = (await res.json()) as {
-      models?: Array<{ name?: string; supportedGenerationMethods?: string[] }>;
-    };
-    const models = data.models ?? [];
-    return models
-      .filter((model) => model.supportedGenerationMethods?.includes('generateContent'))
-      .map((model) => model.name ?? '')
-      .filter((name) => name.length > 0)
-      .map((name) => name.replace('models/', ''));
-  } finally {
-    clearTimeout(timeout);
-  }
-};
-
-const generateWithModel = async (modelName: string, prompt: string): Promise<string> => {
-  const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: modelName });
-  const result = await model.generateContent(prompt);
-  return result.response.text();
-};
-
-const callGemini = async (prompt: string): Promise<string> => {
-  try {
-    return await generateWithModel(env.MODEL, prompt);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!message.includes('404') && !message.includes('not found')) {
-      throw error;
-    }
-    logger.warn('Gemini model not found, listing available models', { preferred: env.MODEL });
-    const available = await listAvailableModels();
-    if (available.length === 0) {
-      throw error;
-    }
-    logger.warn('Using fallback Gemini model', { model: available[0] });
-    return await generateWithModel(available[0], prompt);
-  }
 };
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -199,8 +158,13 @@ const extractSkillsForJobs = async (jobs: AdzunaJob[]): Promise<Map<string, { na
     if (!description) continue;
 
     try {
-      const prompt = MARKET_SKILL_PROMPT(description.slice(0, 6000));
-      const responseText = await callGemini(prompt);
+      const prompt = MARKET_SKILL_PROMPT(description.slice(0, 4000));
+      const responseText = await runOpenAI({
+        input: prompt,
+        jsonObject: false,
+        maxOutputTokens: 300,
+        temperature: 0.2
+      });
       const skills = extractJsonArray(responseText);
 
       skills.forEach((skill) => {

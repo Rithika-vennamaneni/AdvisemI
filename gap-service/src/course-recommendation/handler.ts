@@ -3,12 +3,8 @@ import type { Request, Response } from 'express';
 import { randomUUID } from 'crypto';
 import { supabase } from '../util/supabase.js';
 import { logger } from '../util/logger.js';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { env } from '../env.js';
-import { safeJsonParse } from '../util/json.js';
-import { fetchSubjects, fetchCoursesForSubject } from '../uiuc/client.js';
-import { buildSubjectSelectionPrompt, type SubjectSelectionResult } from '../gemini/subjectPrompt.js';
-import { buildCourseMatchPrompt, type CourseMatchResult } from '../gemini/courseMatchPrompt.js';
+import { fetchCoursesForSubject } from '../uiuc/client.js';
+import type { CourseMatchResult } from '../gemini/courseMatchPrompt.js';
 import type { GapSkill, CourseRecommendationRequest, CourseRecommendationResponse } from './types.js';
 import type { UIUCCourse } from '../uiuc/types.js';
 import { ensureMarketSkills } from '../market-skills/agent.js';
@@ -22,54 +18,6 @@ const requestSchema = z.object({
   limit: z.number().int().min(1).max(50).optional().default(20),
 });
 
-const listAvailableModels = async (): Promise<string[]> => {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${env.GEMINI_API_KEY}`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 6000);
-  try {
-    const res = await fetch(url, { signal: controller.signal });
-    if (!res.ok) {
-      throw new Error(`ListModels failed (${res.status})`);
-    }
-    const data = (await res.json()) as {
-      models?: Array<{ name?: string; supportedGenerationMethods?: string[] }>;
-    };
-    const models = data.models ?? [];
-    return models
-      .filter((model) => model.supportedGenerationMethods?.includes('generateContent'))
-      .map((model) => model.name ?? '')
-      .filter((name) => name.length > 0)
-      .map((name) => name.replace('models/', ''));
-  } finally {
-    clearTimeout(timeout);
-  }
-};
-
-const generateWithModel = async (modelName: string, prompt: string): Promise<string> => {
-  const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: modelName });
-  const result = await model.generateContent(prompt);
-  return result.response.text();
-};
-
-const callGemini = async (prompt: string): Promise<string> => {
-  try {
-    return await generateWithModel(env.MODEL, prompt);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!message.includes('404') && !message.includes('not found')) {
-      throw error;
-    }
-    logger.warn('Gemini model not found, listing available models', { preferred: env.MODEL });
-    const available = await listAvailableModels();
-    if (available.length === 0) {
-      throw error;
-    }
-    logger.warn('Using fallback Gemini model', { model: available[0] });
-    return await generateWithModel(available[0], prompt);
-  }
-};
-
 const tokenize = (value: string): string[] => {
   return value
     .toLowerCase()
@@ -79,21 +27,126 @@ const tokenize = (value: string): string[] => {
     .filter((token) => token.length > 0);
 };
 
+const normalizeText = (value: string): string => {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const hasWord = (text: string, word: string): boolean => {
+  if (!word) return false;
+  const pattern = new RegExp(`\\b${escapeRegExp(word)}\\b`, 'i');
+  return pattern.test(text);
+};
+
+const SKILL_SYNONYMS: Record<string, string[]> = {
+  'machine learning': ['ml'],
+  'deep learning': ['dl'],
+  'artificial intelligence': ['ai'],
+  'natural language processing': ['nlp'],
+  'computer vision': ['cv', 'vision'],
+  'data visualization': ['visualization', 'viz'],
+  'data engineering': ['data pipeline', 'etl', 'data warehouse', 'data warehousing'],
+  'data science': ['data scientist'],
+  statistics: ['statistical', 'stat'],
+  'linear algebra': ['linear', 'algebra'],
+  'time series': ['time-series', 'timeseries'],
+  'operating systems': ['os'],
+  'version control': ['git']
+};
+
+const SKILL_KEYWORDS: Record<string, string[]> = {
+  'machine learning': ['machine learning', 'supervised', 'unsupervised', 'classification', 'regression', 'ml'],
+  'deep learning': ['deep learning', 'neural network', 'cnn', 'rnn', 'transformer', 'dl'],
+  statistics: ['statistics', 'probability', 'inference', 'hypothesis', 'bayesian', 'regression'],
+  'data visualization': ['data visualization', 'visualization', 'dashboard', 'plot', 'chart', 'tableau', 'power bi'],
+  'data mining': ['data mining', 'pattern mining', 'clustering', 'association rules'],
+  'data science': ['data science', 'data scientist'],
+  'data engineering': ['data engineering', 'etl', 'data pipeline', 'data warehouse', 'warehousing'],
+  'feature engineering': ['feature engineering', 'feature extraction'],
+  'model evaluation': ['model evaluation', 'cross validation', 'roc', 'precision', 'recall'],
+  'time series': ['time series', 'timeseries', 'forecast'],
+  'natural language processing': ['natural language processing', 'nlp', 'text mining', 'language model'],
+  'computer vision': ['computer vision', 'image processing', 'vision', 'cv'],
+  sql: ['sql', 'query', 'relational', 'database', 'postgres', 'mysql'],
+  python: ['python'],
+  r: ['r programming', 'r'],
+  'cloud computing': ['cloud computing', 'aws', 'azure', 'gcp'],
+  'distributed systems': ['distributed systems', 'distributed', 'scalability'],
+  'system design': ['system design', 'architecture'],
+  'version control': ['version control', 'git']
+};
+
+const expandTokensForSkill = (skillName: string): string[] => {
+  const base = tokenize(skillName);
+  const synonyms = SKILL_SYNONYMS[skillName.toLowerCase()] ?? [];
+  synonyms.forEach((value) => {
+    base.push(...tokenize(value));
+  });
+  return Array.from(new Set(base));
+};
+
+const matchesSkillTokens = (tokens: string[], haystack: string, titleStack: string): boolean => {
+  if (tokens.length === 0) return false;
+  if (tokens.length === 1) {
+    return hasWord(haystack, tokens[0]) || hasWord(titleStack, tokens[0]);
+  }
+
+  const bodyHits = tokens.filter((token) => hasWord(haystack, token)).length;
+  const titleHits = tokens.filter((token) => hasWord(titleStack, token)).length;
+  if (bodyHits >= Math.min(2, tokens.length)) return true;
+  return titleHits >= 1 && bodyHits >= 1;
+};
+
+const scoreSkillMatch = (
+  skillName: string,
+  haystack: string,
+  titleStack: string
+): { matched: boolean; score: number } => {
+  const normalizedSkill = skillName.toLowerCase();
+  const keywords = SKILL_KEYWORDS[normalizedSkill] ?? [];
+  let score = 0;
+
+  keywords.forEach((phrase) => {
+    const normalizedPhrase = normalizeText(phrase);
+    if (!normalizedPhrase) return;
+    if (normalizedPhrase.includes(' ')) {
+      if (titleStack.includes(normalizedPhrase)) score += 3;
+      else if (haystack.includes(normalizedPhrase)) score += 2;
+      return;
+    }
+    if (hasWord(titleStack, normalizedPhrase)) score += 3;
+    else if (hasWord(haystack, normalizedPhrase)) score += 2;
+  });
+
+  if (score > 0) {
+    return { matched: true, score };
+  }
+
+  const tokens = expandTokensForSkill(skillName);
+  const matched = matchesSkillTokens(tokens, haystack, titleStack);
+  if (!matched) return { matched: false, score: 0 };
+
+  const baseScore = tokens.length >= 2 ? 2 : 1;
+  return { matched: true, score: baseScore };
+};
+
 const buildFallbackMatch = (course: UIUCCourse, gapSkills: GapSkill[]): CourseMatchResult | null => {
-  const haystack = `${course.title ?? ''} ${course.description ?? ''}`.toLowerCase();
-  const titleStack = (course.title ?? '').toLowerCase();
+  const haystack = normalizeText(`${course.title ?? ''} ${course.description ?? ''}`);
+  const titleStack = normalizeText(course.title ?? '');
   const matched: string[] = [];
   let score = 0;
 
   gapSkills.forEach((gap) => {
-    const tokens = tokenize(gap.skill_name);
-    if (tokens.length === 0) return;
-    const allInText = tokens.every((token) => haystack.includes(token));
-    if (!allInText) return;
+    const matchResult = scoreSkillMatch(gap.skill_name, haystack, titleStack);
+    if (!matchResult.matched) return;
     matched.push(gap.skill_name);
     const base = Math.max(1, 6 - gap.priority);
-    const titleMatch = tokens.every((token) => titleStack.includes(token));
-    score += base + (titleMatch ? 1 : 0);
+    score += base + matchResult.score;
   });
 
   if (matched.length === 0) return null;
@@ -102,7 +155,7 @@ const buildFallbackMatch = (course: UIUCCourse, gapSkills: GapSkill[]): CourseMa
   const matchScore = Math.min(1, score / maxScore);
   const confidence = Math.min(1, 0.4 + matched.length / Math.max(1, gapSkills.length));
   const list = matched.slice(0, 3).join(', ');
-  const explanation = `Addresses gaps in ${list} through coursework that aligns with these skills.`;
+  const explanation = `Builds ${list} through topics covered in ${course.subject} ${course.number} and related coursework.`;
 
   return {
     match_score: matchScore,
@@ -126,72 +179,39 @@ const fetchGapSkills = async (userId: string): Promise<GapSkill[]> => {
   return (data || []) as GapSkill[];
 };
 
+const SUBJECT_RULES: Array<{ subject: string; patterns: RegExp[] }> = [
+  { subject: 'STAT', patterns: [/stat|statistics|probability|bayes|regression|hypothesis|inference/i] },
+  { subject: 'MATH', patterns: [/math|calculus|linear algebra|optimization|numerical/i] },
+  { subject: 'CS', patterns: [/machine learning|ml|ai|algorithm|data structure|software|programming|python|java|c\+\+|database|sql|system|distributed|cloud|security|network|operating/i] },
+  { subject: 'ECE', patterns: [/signal|hardware|embedded|circuit|robot|control|iot|computer vision/i] },
+  { subject: 'IS', patterns: [/information|analytics|visualization|bi|business intelligence|data warehouse|etl|data pipeline/i] },
+  { subject: 'INFO', patterns: [/information|data management|ux|hci/i] },
+  { subject: 'BADM', patterns: [/business|management|product|strategy|finance|accounting/i] },
+  { subject: 'ECON', patterns: [/economics|econometric|market/i] }
+];
+
 const selectRelevantSubjects = async (gapSkills: GapSkill[]): Promise<string[]> => {
   if (gapSkills.length === 0) {
     return [];
   }
 
-  const prompt = buildSubjectSelectionPrompt(gapSkills);
-  logger.info('Calling Gemini for subject selection', { gapSkillsCount: gapSkills.length });
-
-  try {
-    const responseText = await callGemini(prompt);
-    const parsed = safeJsonParse<SubjectSelectionResult>(responseText);
-
-    if (!parsed.ok) {
-      logger.warn('Failed to parse subject selection response', { error: parsed.error });
-      // Fallback to common technical subjects
-      return ['CS', 'ECE', 'MATH', 'STAT'];
-    }
-
-    const subjects = parsed.value.relevant_subjects
-      .filter((s) => s.relevance_score > 0.3)
-      .sort((a, b) => b.relevance_score - a.relevance_score)
-      .map((s) => s.subject_code.toUpperCase())
-      .slice(0, 10); // Limit to top 10
-
-    logger.info('Selected relevant subjects', { subjects, count: subjects.length });
-    return subjects.length > 0 ? subjects : ['CS', 'ECE', 'MATH', 'STAT'];
-  } catch (error) {
-    logger.error('Subject selection failed', { error: error instanceof Error ? error.message : 'Unknown' });
-    // Fallback to common technical subjects
-    return ['CS', 'ECE', 'MATH', 'STAT'];
-  }
-};
-
-const matchCourseToSkills = async (
-  course: UIUCCourse,
-  gapSkills: GapSkill[]
-): Promise<CourseMatchResult | null> => {
-  const prompt = buildCourseMatchPrompt(gapSkills, course);
-  
-  try {
-    const responseText = await callGemini(prompt);
-    const parsed = safeJsonParse<CourseMatchResult>(responseText);
-
-    if (!parsed.ok) {
-      logger.warn('Failed to parse course match response', { 
-        course: `${course.subject} ${course.number}`,
-        error: parsed.error 
-      });
-      return buildFallbackMatch(course, gapSkills);
-    }
-
-    const result = parsed.value;
-    
-    // Only return matches with reasonable confidence and score
-    if (result.match_score < 0.3 || result.confidence < 0.4) {
-      return null;
-    }
-
-    return result;
-  } catch (error) {
-    logger.warn('Course matching failed', { 
-      course: `${course.subject} ${course.number}`,
-      error: error instanceof Error ? error.message : 'Unknown' 
+  const scores = new Map<string, number>();
+  gapSkills.forEach((gap) => {
+    const text = gap.skill_name.toLowerCase();
+    SUBJECT_RULES.forEach((rule) => {
+      if (rule.patterns.some((pattern) => pattern.test(text))) {
+        scores.set(rule.subject, (scores.get(rule.subject) ?? 0) + Math.max(1, 6 - gap.priority));
+      }
     });
-    return buildFallbackMatch(course, gapSkills);
-  }
+  });
+
+  const subjects = Array.from(scores.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([subject]) => subject)
+    .slice(0, 8);
+
+  const fallback = ['CS', 'STAT', 'MATH', 'IS'];
+  return subjects.length > 0 ? subjects : fallback;
 };
 
 const upsertCourse = async (course: UIUCCourse, year: string, semester: string): Promise<string> => {
@@ -284,7 +304,7 @@ export const generateCourseRecommendations = async (req: Request, res: Response)
     }
 
     let gapSkills = await fetchGapSkills(user_id);
-    if (gapSkills.length === 0) {
+    if (gapSkills.length < 3) {
       await runGapAnalysisInternal({ user_id, run_id: resolvedRunId, limit: 15 });
       gapSkills = await fetchGapSkills(user_id);
     }
@@ -318,10 +338,20 @@ export const generateCourseRecommendations = async (req: Request, res: Response)
 
     // Step 4: Fetch courses from UIUC API (in parallel for each subject)
     logger.info('Fetching courses from UIUC API', { subjects: relevantSubjects });
-    const coursePromises = relevantSubjects.map((subject) =>
-      fetchCoursesForSubject(year, semester, subject)
-    );
-    const courseArrays = await Promise.all(coursePromises);
+    const MAX_CONCURRENT_SUBJECTS = 3;
+    const queue = [...relevantSubjects];
+    const courseArrays: UIUCCourse[][] = [];
+
+    const workers = Array.from({ length: Math.min(MAX_CONCURRENT_SUBJECTS, queue.length) }, async () => {
+      while (queue.length > 0) {
+        const subject = queue.shift();
+        if (!subject) break;
+        const courses = await fetchCoursesForSubject(year, semester, subject);
+        courseArrays.push(courses);
+      }
+    });
+
+    await Promise.all(workers);
     const allCourses = courseArrays.flat();
     
     logger.info('Fetched courses from UIUC', { count: allCourses.length });
@@ -337,16 +367,12 @@ export const generateCourseRecommendations = async (req: Request, res: Response)
       return;
     }
 
-    // Step 5: Match courses to gap skills using Gemini
+    // Step 5: Match courses to gap skills using deterministic matching
     logger.info('Matching courses to gap skills', { coursesCount: allCourses.length });
-    const matchPromises = allCourses.map((course) => matchCourseToSkills(course, gapSkills));
-    const matchResults = await Promise.all(matchPromises);
-
-    // Combine courses with their match results
     const courseMatches = allCourses
-      .map((course, index) => ({
+      .map((course) => ({
         course,
-        match: matchResults[index],
+        match: buildFallbackMatch(course, gapSkills),
       }))
       .filter((item) => item.match !== null) as Array<{
       course: UIUCCourse;
