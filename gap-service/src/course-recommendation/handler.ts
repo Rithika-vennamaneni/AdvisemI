@@ -19,11 +19,61 @@ const requestSchema = z.object({
   limit: z.number().int().min(1).max(50).optional().default(20),
 });
 
-const callGemini = async (prompt: string): Promise<string> => {
+const isMissingRunIdColumn = (message: string | undefined): boolean => {
+  if (!message) return false;
+  const lower = message.toLowerCase();
+  return (
+    lower.includes('run_id') &&
+    (lower.includes('does not exist') || lower.includes('could not find') || lower.includes('schema cache'))
+  );
+};
+
+const listAvailableModels = async (): Promise<string[]> => {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${env.GEMINI_API_KEY}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 6000);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) {
+      throw new Error(`ListModels failed (${res.status})`);
+    }
+    const data = (await res.json()) as {
+      models?: Array<{ name?: string; supportedGenerationMethods?: string[] }>;
+    };
+    const models = data.models ?? [];
+    return models
+      .filter((model) => model.supportedGenerationMethods?.includes('generateContent'))
+      .map((model) => model.name ?? '')
+      .filter((name) => name.length > 0)
+      .map((name) => name.replace('models/', ''));
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const generateWithModel = async (modelName: string, prompt: string): Promise<string> => {
   const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: env.MODEL });
+  const model = genAI.getGenerativeModel({ model: modelName });
   const result = await model.generateContent(prompt);
   return result.response.text();
+};
+
+const callGemini = async (prompt: string): Promise<string> => {
+  try {
+    return await generateWithModel(env.MODEL, prompt);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes('404') && !message.includes('not found')) {
+      throw error;
+    }
+    logger.warn('Gemini model not found, listing available models', { preferred: env.MODEL });
+    const available = await listAvailableModels();
+    if (available.length === 0) {
+      throw error;
+    }
+    logger.warn('Using fallback Gemini model', { model: available[0] });
+    return await generateWithModel(available[0], prompt);
+  }
 };
 
 const fetchGapSkills = async (userId: string, runId: string): Promise<GapSkill[]> => {
@@ -35,10 +85,28 @@ const fetchGapSkills = async (userId: string, runId: string): Promise<GapSkill[]
     .order('priority', { ascending: true });
 
   if (error) {
-    throw new Error(`Failed to fetch gap skills: ${error.message}`);
+    if (isMissingRunIdColumn(error.message)) {
+      logger.warn('gap_skills.run_id column missing, falling back to user_id only', { error: error.message });
+    } else {
+      throw new Error(`Failed to fetch gap skills: ${error.message}`);
+    }
   }
 
-  return (data || []) as GapSkill[];
+  if (data && data.length > 0) {
+    return data as GapSkill[];
+  }
+
+  const { data: fallback, error: fallbackError } = await supabase
+    .from('gap_skills')
+    .select('id, user_id, skill_name, priority, reason')
+    .eq('user_id', userId)
+    .order('priority', { ascending: true });
+
+  if (fallbackError) {
+    throw new Error(`Failed to fetch gap skills (fallback): ${fallbackError.message}`);
+  }
+
+  return (fallback || []) as GapSkill[];
 };
 
 const selectRelevantSubjects = async (gapSkills: GapSkill[]): Promise<string[]> => {
@@ -154,18 +222,33 @@ const insertRecommendations = async (
     return;
   }
 
-  const { error } = await supabase.from('recommendations').insert(
-    recommendations.map((rec) => ({
-      user_id: userId,
-      run_id: runId,
-      course_id: rec.courseId,
-      score: rec.score,
-      matched_gaps: rec.matchedGaps,
-      explanation: rec.explanation,
-    }))
-  );
+  const rows = recommendations.map((rec) => ({
+    user_id: userId,
+    run_id: runId,
+    course_id: rec.courseId,
+    score: rec.score,
+    matched_gaps: rec.matchedGaps,
+    explanation: rec.explanation,
+  }));
+
+  const { error } = await supabase.from('recommendations').insert(rows);
 
   if (error) {
+    if (isMissingRunIdColumn(error.message)) {
+      logger.warn('recommendations.run_id column missing, inserting without run_id', { error: error.message });
+      const fallbackRows = recommendations.map((rec) => ({
+        user_id: userId,
+        course_id: rec.courseId,
+        score: rec.score,
+        matched_gaps: rec.matchedGaps,
+        explanation: rec.explanation,
+      }));
+      const { error: fallbackError } = await supabase.from('recommendations').insert(fallbackRows);
+      if (fallbackError) {
+        throw new Error(`Failed to insert recommendations (fallback): ${fallbackError.message}`);
+      }
+      return;
+    }
     throw new Error(`Failed to insert recommendations: ${error.message}`);
   }
 };
@@ -178,6 +261,17 @@ const deleteExistingRecommendations = async (userId: string, runId: string): Pro
     .eq('run_id', runId);
 
   if (error) {
+    if (isMissingRunIdColumn(error.message)) {
+      logger.warn('recommendations.run_id column missing, deleting by user_id only', { error: error.message });
+      const { error: fallbackError } = await supabase
+        .from('recommendations')
+        .delete()
+        .eq('user_id', userId);
+      if (fallbackError) {
+        logger.warn('Failed to delete existing recommendations (fallback)', { error: fallbackError.message });
+      }
+      return;
+    }
     logger.warn('Failed to delete existing recommendations', { error: error.message });
     // Don't throw - continue with insertion
   }

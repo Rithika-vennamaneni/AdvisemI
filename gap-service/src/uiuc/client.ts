@@ -2,7 +2,7 @@ import { XMLParser } from 'fast-xml-parser';
 import { logger } from '../util/logger.js';
 import type { UIUCCourse, UIUCSubject, UIUCCatalogResponse } from './types.js';
 
-const BASE_URL = 'http://courses.illinois.edu/cisapp/explorer';
+const BASE_URL = 'https://courses.illinois.edu/cisapp/explorer';
 const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: '',
@@ -55,17 +55,26 @@ export const fetchSubjects = async (year: string, semester: string): Promise<UIU
 
   try {
     const xmlText = await fetchWithRetry(url);
-    const parsed = parser.parse(xmlText) as { children?: { subject?: UIUCSubject | UIUCSubject[] } };
+    const parsed = parser.parse(xmlText) as Record<string, unknown>;
+    const root =
+      (parsed['ns2:term'] as Record<string, unknown> | undefined) ??
+      (parsed['term'] as Record<string, unknown> | undefined) ??
+      parsed;
 
     const subjects: UIUCSubject[] = [];
-    const subjectData = parsed.children?.subject;
+    const rootRecord = root as Record<string, unknown>;
+    const subjectData = rootRecord?.subjects ? rootRecord.subjects : rootRecord?.children;
 
-    if (!subjectData) {
+    const rawSubjects =
+      (subjectData as Record<string, unknown>)?.subject ??
+      (subjectData as UIUCSubject | UIUCSubject[] | undefined);
+
+    if (!rawSubjects) {
       logger.warn('No subjects found in response', { year, semester });
       return [];
     }
 
-    const subjectArray = Array.isArray(subjectData) ? subjectData : [subjectData];
+    const subjectArray = Array.isArray(rawSubjects) ? rawSubjects : [rawSubjects];
 
     for (const subj of subjectArray) {
       if (subj && typeof subj === 'object' && 'code' in subj) {
@@ -95,13 +104,21 @@ export const fetchCoursesForSubject = async (
 
   try {
     const xmlText = await fetchWithRetry(url);
-    const parsed = parser.parse(xmlText) as UIUCCatalogResponse;
+    const parsed = parser.parse(xmlText) as Record<string, unknown>;
+    const subjectNode =
+      (parsed['ns2:subject'] as Record<string, unknown> | undefined) ??
+      (parsed['subject'] as Record<string, unknown> | undefined);
 
     const courses: UIUCCourse[] = [];
-    const courseData = parsed.courses?.course;
+    const subjectRecord = subjectNode as Record<string, unknown> | undefined;
+    const cascadingCourses = subjectRecord?.cascadingCourses as Record<string, unknown> | undefined;
+    const coursesNode = subjectRecord?.courses as Record<string, unknown> | undefined;
+    const courseData =
+      (cascadingCourses?.cascadingCourse as unknown) ??
+      (coursesNode?.course as unknown);
 
     if (!courseData) {
-      logger.debug('No courses found for subject', { subjectCode });
+      logger.info('No courses found for subject', { subjectCode });
       return [];
     }
 
@@ -111,15 +128,23 @@ export const fetchCoursesForSubject = async (
       if (!course || typeof course !== 'object') continue;
 
       const courseId = course.id || '';
-      const courseNumber = courseId.split('/').pop() || '';
+      let courseNumber = '';
+      if (courseId.startsWith(subjectCode)) {
+        courseNumber = courseId.replace(subjectCode, '').trim();
+      }
+      if (!courseNumber && course.href) {
+        const hrefParts = course.href.split('/');
+        const last = hrefParts[hrefParts.length - 1];
+        courseNumber = last.replace('.xml', '') || '';
+      }
       const courseUrl = course.href 
-        ? `http://courses.illinois.edu${course.href}`
+        ? course.href
         : `${BASE_URL}/catalog/${year}/${semester}/${subjectCode}/${courseNumber}.xml`;
 
       // Extract credits from creditHours or label
       let credits: number | null = null;
       if (course.creditHours) {
-        const creditMatch = course.creditHours.match(/(\d+(?:\.\d+)?)/);
+        const creditMatch = String(course.creditHours).match(/(\d+(?:\.\d+)?)/);
         if (creditMatch) {
           credits = parseFloat(creditMatch[1]);
         }
@@ -127,7 +152,9 @@ export const fetchCoursesForSubject = async (
 
       // Try to get description from nested structure
       let description: string | null = null;
-      if (course.text) {
+      if (course.description) {
+        description = course.description;
+      } else if (course.text) {
         description = course.text;
       }
 
@@ -168,7 +195,7 @@ export const fetchCourseDetails = async (
   courseNumber: string
 ): Promise<UIUCCourse | null> => {
   const url = `${BASE_URL}/catalog/${year}/${semester}/${subjectCode}/${courseNumber}.xml?mode=detail`;
-  logger.debug('Fetching course details', { year, semester, subjectCode, courseNumber });
+    logger.info('Fetching course details', { year, semester, subjectCode, courseNumber });
 
   try {
     const xmlText = await fetchWithRetry(url);

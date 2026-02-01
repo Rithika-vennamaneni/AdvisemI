@@ -4,7 +4,7 @@ export interface GapSkill {
   skill_name: string;
   priority: number;
   reason: string | null;
-  run_id: string;
+  run_id?: string | null;
 }
 
 export interface CourseRecommendationRequest {
