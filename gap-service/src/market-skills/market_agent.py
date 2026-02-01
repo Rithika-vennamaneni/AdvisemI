@@ -141,7 +141,7 @@
 #             continue
 
 #         try:
-#             skills = extract_market_skills(desc, model)
+#             #skills = extract_market_skills(desc, model)
 
 #             for skill in skills:
 #                 key = normalize_skill_name(skill)
@@ -215,7 +215,40 @@ def _extract_json_array(text: str) -> List[str]:
 # Market Skill Extraction
 # ----------------------------
 
-def extract_market_skills(job_description: str, model) -> List[str]:
+# def extract_market_skills(job_description: str, model) -> List[str]:
+#     """
+#     Extract concrete, learnable, role-agnostic technical skills
+#     implied by the job description.
+#     """
+
+#     prompt = f"""
+# You are designing a learning roadmap for a student.
+
+# Extract ONLY concrete, teachable, technical skills that a candidate would need
+# to explicitly learn or practice to qualify for this job.
+
+# STRICT RULES:
+# - EXCLUDE generic umbrella terms (e.g., "AI", "Machine Learning", "Data Science")
+# - Prefer specific tools, frameworks, platforms, techniques, or methods
+# - Infer skills ONLY if clearly implied by responsibilities
+# - Each skill must be something a student could realistically study or train for
+# - Exclude soft skills, role titles, and vague phrases
+
+# OUTPUT RULES:
+# - Return ONLY a JSON array
+# - Each item must be 1–4 words
+# - Use canonical, industry-standard skill names
+# - Maximum 10 skills
+# - No explanations, no markdown
+
+# Job Description:
+# {job_description}
+# """
+
+#     response = model.generate_content(prompt)
+#     return _extract_json_array(response.text)
+
+def extract_market_skills(job_description: str) -> List[str]:
     """
     Extract concrete, learnable, role-agnostic technical skills
     implied by the job description.
@@ -245,7 +278,13 @@ Job Description:
 {job_description}
 """
 
-    response = model.generate_content(prompt)
+    client = get_keywords_gemini_client()
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+    )
+
     return _extract_json_array(response.text)
 
 
@@ -353,7 +392,9 @@ def build_market_skill_rows(
             continue
 
         try:
-            skills = extract_market_skills(desc, model)
+            #skills = extract_market_skills(desc, model)
+            skills = extract_market_skills(desc)
+
 
             for skill in skills:
                 key = normalize_skill_name(skill)
