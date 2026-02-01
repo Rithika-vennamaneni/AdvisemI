@@ -1,0 +1,6 @@
+# Skill gap analysis (Python)
+# Install: pip install -r requirements.txt
+
+groq>=0.4.0,<2
+supabase>=2.0.0,<3
+python-dotenv>=1.0.0,<2

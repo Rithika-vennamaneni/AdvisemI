@@ -25,3 +25,7 @@ dist-ssr
 
 # Local envs
 gap-service/.env
+
+# Python
+__pycache__/
+*.py[cod]
