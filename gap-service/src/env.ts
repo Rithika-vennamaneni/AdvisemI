@@ -20,6 +20,8 @@ const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   GEMINI_API_KEY: z.string().min(1),
   MODEL: z.string().min(1),
+  ADZUNA_APP_ID: optionalString,
+  ADZUNA_APP_KEY: optionalString,
   PORT: optionalString,
   DEFAULT_USER_ID: optionalUuid,
   DEFAULT_USER_EMAIL: optionalEmail,

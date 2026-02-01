@@ -10,6 +10,8 @@ import { buildSubjectSelectionPrompt, type SubjectSelectionResult } from '../gem
 import { buildCourseMatchPrompt, type CourseMatchResult } from '../gemini/courseMatchPrompt.js';
 import type { GapSkill, CourseRecommendationRequest, CourseRecommendationResponse } from './types.js';
 import type { UIUCCourse } from '../uiuc/types.js';
+import { ensureMarketSkills } from '../market-skills/agent.js';
+import { runGapAnalysisInternal } from '../gap/handler.js';
 
 const requestSchema = z.object({
   user_id: z.string().uuid(),
@@ -74,6 +76,48 @@ const callGemini = async (prompt: string): Promise<string> => {
     logger.warn('Using fallback Gemini model', { model: available[0] });
     return await generateWithModel(available[0], prompt);
   }
+};
+
+const tokenize = (value: string): string[] => {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0);
+};
+
+const buildFallbackMatch = (course: UIUCCourse, gapSkills: GapSkill[]): CourseMatchResult | null => {
+  const haystack = `${course.title ?? ''} ${course.description ?? ''}`.toLowerCase();
+  const titleStack = (course.title ?? '').toLowerCase();
+  const matched: string[] = [];
+  let score = 0;
+
+  gapSkills.forEach((gap) => {
+    const tokens = tokenize(gap.skill_name);
+    if (tokens.length === 0) return;
+    const allInText = tokens.every((token) => haystack.includes(token));
+    if (!allInText) return;
+    matched.push(gap.skill_name);
+    const base = Math.max(1, 6 - gap.priority);
+    const titleMatch = tokens.every((token) => titleStack.includes(token));
+    score += base + (titleMatch ? 1 : 0);
+  });
+
+  if (matched.length === 0) return null;
+
+  const maxScore = Math.max(1, gapSkills.length * 6);
+  const matchScore = Math.min(1, score / maxScore);
+  const confidence = Math.min(1, 0.4 + matched.length / Math.max(1, gapSkills.length));
+  const list = matched.slice(0, 3).join(', ');
+  const explanation = `Addresses gaps in ${list} through coursework that aligns with these skills.`;
+
+  return {
+    match_score: matchScore,
+    matched_gaps: matched,
+    explanation,
+    confidence
+  };
 };
 
 const fetchGapSkills = async (userId: string, runId: string): Promise<GapSkill[]> => {
@@ -157,7 +201,7 @@ const matchCourseToSkills = async (
         course: `${course.subject} ${course.number}`,
         error: parsed.error 
       });
-      return null;
+      return buildFallbackMatch(course, gapSkills);
     }
 
     const result = parsed.value;
@@ -173,19 +217,17 @@ const matchCourseToSkills = async (
       course: `${course.subject} ${course.number}`,
       error: error instanceof Error ? error.message : 'Unknown' 
     });
-    return null;
+    return buildFallbackMatch(course, gapSkills);
   }
 };
 
 const upsertCourse = async (course: UIUCCourse, year: string, semester: string): Promise<string> => {
   const term = `${year}-${semester}`;
-  const courseId = `${course.subject}-${course.number}-${term}`;
 
   const { data, error } = await supabase
     .from('courses')
     .upsert(
       {
-        id: courseId,
         subject: course.subject,
         number: course.number,
         title: course.title,
@@ -195,7 +237,7 @@ const upsertCourse = async (course: UIUCCourse, year: string, semester: string):
         last_synced: new Date().toISOString(),
       },
       {
-        onConflict: 'id',
+        onConflict: 'term,subject,number',
       }
     )
     .select('id')
@@ -289,8 +331,20 @@ export const generateCourseRecommendations = async (req: Request, res: Response)
   try {
     logger.info('Starting course recommendation generation', { user_id, run_id, year, semester });
 
-    // Step 1: Fetch gap skills
-    const gapSkills = await fetchGapSkills(user_id, run_id);
+    // Step 1: Ensure market skills (if missing) and run gap analysis if needed
+    try {
+      await ensureMarketSkills(user_id, run_id);
+    } catch (error) {
+      logger.warn('Market skill extraction skipped', { error: error instanceof Error ? error.message : 'Unknown' });
+    }
+
+    let gapSkills = await fetchGapSkills(user_id, run_id);
+    if (gapSkills.length === 0) {
+      await runGapAnalysisInternal({ user_id, run_id, limit: 15 });
+      gapSkills = await fetchGapSkills(user_id, run_id);
+    }
+
+    // Step 2: Fetch gap skills
     if (gapSkills.length === 0) {
       res.status(200).json({
         user_id,
@@ -304,7 +358,7 @@ export const generateCourseRecommendations = async (req: Request, res: Response)
 
     logger.info('Fetched gap skills', { count: gapSkills.length });
 
-    // Step 2: Use Gemini to identify relevant subjects
+    // Step 3: Use Gemini to identify relevant subjects
     const relevantSubjects = await selectRelevantSubjects(gapSkills);
     if (relevantSubjects.length === 0) {
       res.status(200).json({
@@ -317,7 +371,7 @@ export const generateCourseRecommendations = async (req: Request, res: Response)
       return;
     }
 
-    // Step 3: Fetch courses from UIUC API (in parallel for each subject)
+    // Step 4: Fetch courses from UIUC API (in parallel for each subject)
     logger.info('Fetching courses from UIUC API', { subjects: relevantSubjects });
     const coursePromises = relevantSubjects.map((subject) =>
       fetchCoursesForSubject(year, semester, subject)
@@ -338,7 +392,7 @@ export const generateCourseRecommendations = async (req: Request, res: Response)
       return;
     }
 
-    // Step 4: Match courses to gap skills using Gemini
+    // Step 5: Match courses to gap skills using Gemini
     logger.info('Matching courses to gap skills', { coursesCount: allCourses.length });
     const matchPromises = allCourses.map((course) => matchCourseToSkills(course, gapSkills));
     const matchResults = await Promise.all(matchPromises);
@@ -356,7 +410,7 @@ export const generateCourseRecommendations = async (req: Request, res: Response)
 
     logger.info('Matched courses', { matchedCount: courseMatches.length });
 
-    // Step 5: Rank and limit recommendations
+    // Step 6: Rank and limit recommendations
     const rankedMatches = courseMatches
       .sort((a, b) => {
         // Sort by match score (descending), then by number of matched gaps
@@ -367,7 +421,7 @@ export const generateCourseRecommendations = async (req: Request, res: Response)
       })
       .slice(0, limit);
 
-    // Step 6: Store courses and recommendations
+    // Step 7: Store courses and recommendations
     logger.info('Storing courses and recommendations', { count: rankedMatches.length });
 
     // Delete existing recommendations first
@@ -394,7 +448,7 @@ export const generateCourseRecommendations = async (req: Request, res: Response)
       recommendationsCreated: recommendationsToInsert.length,
     });
 
-    // Step 7: Return response
+    // Step 8: Return response
     const response: CourseRecommendationResponse = {
       user_id,
       run_id,

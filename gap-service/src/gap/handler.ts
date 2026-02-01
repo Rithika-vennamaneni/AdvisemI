@@ -14,9 +14,9 @@ const requestSchema = z.object({
   limit: z.number().int().min(1).max(100).optional()
 });
 
-type GapAnalysisRequest = z.infer<typeof requestSchema>;
+export type GapAnalysisRequest = z.infer<typeof requestSchema>;
 
-type GapResponse = {
+export type GapResponse = {
   user_id: string;
   run_id: string;
   inserted_count: number;
@@ -175,6 +175,70 @@ const dedupeGaps = (
   return output;
 };
 
+export const runGapAnalysisInternal = async (input: GapAnalysisRequest): Promise<GapResponse> => {
+  const { user_id, run_id, limit = 15 } = input;
+
+  const [resumeRows, marketRows] = await Promise.all([
+    fetchResumeSkills(user_id, run_id),
+    fetchMarketSkills(user_id, run_id)
+  ]);
+
+  logger.info('Fetched skills', {
+    resume_count: resumeRows.length,
+    market_count: marketRows.length
+  });
+
+  if (marketRows.length === 0) {
+    await deleteExistingGaps(user_id, run_id);
+    return { user_id, run_id, inserted_count: 0, gaps: [] };
+  }
+
+  const { resumeSkills, marketSkillsDistinct, marketSkillInputSet } = preprocessSkills(
+    resumeRows,
+    marketRows
+  );
+
+  logger.info('Distinct market skills computed', {
+    distinct_market_count: marketSkillsDistinct.length
+  });
+
+  let gaps = [] as Array<{ skill_name: string; priority: number; reason: string; market_importance: number }>;
+
+  try {
+    const geminiOutput = await runGeminiGapAnalysis({
+      resumeSkills,
+      marketSkills: marketSkillsDistinct,
+      marketSkillInputSet
+    });
+    logger.info('Gemini analysis completed', { status: 'success' });
+    gaps = computeGapsFromGemini(geminiOutput);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown Gemini error';
+    logger.error('Gemini analysis failed, using fallback', { status: 'fallback', error: message });
+    gaps = computeGapsDeterministic(resumeSkills, marketSkillsDistinct);
+  }
+
+  const limitedGaps = orderAndLimitGaps(gaps, limit).map((gap) => ({
+    skill_name: gap.skill_name,
+    priority: gap.priority,
+    reason: gap.reason
+  }));
+
+  const uniqueGaps = dedupeGaps(limitedGaps);
+
+  await deleteExistingGaps(user_id, run_id);
+  await insertGaps(user_id, run_id, uniqueGaps);
+
+  logger.info('Gap skills inserted', { inserted_count: uniqueGaps.length });
+
+  return {
+    user_id,
+    run_id,
+    inserted_count: uniqueGaps.length,
+    gaps: uniqueGaps
+  };
+};
+
 export const runGapAnalysis = async (req: Request, res: Response): Promise<void> => {
   const parsed = requestSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -182,70 +246,8 @@ export const runGapAnalysis = async (req: Request, res: Response): Promise<void>
     return;
   }
 
-  const { user_id, run_id, limit = 15 }: GapAnalysisRequest = parsed.data;
-
   try {
-    const [resumeRows, marketRows] = await Promise.all([
-      fetchResumeSkills(user_id, run_id),
-      fetchMarketSkills(user_id, run_id)
-    ]);
-
-    logger.info('Fetched skills', {
-      resume_count: resumeRows.length,
-      market_count: marketRows.length
-    });
-
-    if (marketRows.length === 0) {
-      await deleteExistingGaps(user_id, run_id);
-      res.status(200).json({ user_id, run_id, inserted_count: 0, gaps: [] });
-      return;
-    }
-
-    const { resumeSkills, marketSkillsDistinct, marketSkillInputSet } = preprocessSkills(
-      resumeRows,
-      marketRows
-    );
-
-    logger.info('Distinct market skills computed', {
-      distinct_market_count: marketSkillsDistinct.length
-    });
-
-    let gaps = [] as Array<{ skill_name: string; priority: number; reason: string; market_importance: number }>;
-
-    try {
-      const geminiOutput = await runGeminiGapAnalysis({
-        resumeSkills,
-        marketSkills: marketSkillsDistinct,
-        marketSkillInputSet
-      });
-      logger.info('Gemini analysis completed', { status: 'success' });
-      gaps = computeGapsFromGemini(geminiOutput);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown Gemini error';
-      logger.error('Gemini analysis failed, using fallback', { status: 'fallback', error: message });
-      gaps = computeGapsDeterministic(resumeSkills, marketSkillsDistinct);
-    }
-
-    const limitedGaps = orderAndLimitGaps(gaps, limit).map((gap) => ({
-      skill_name: gap.skill_name,
-      priority: gap.priority,
-      reason: gap.reason
-    }));
-
-    const uniqueGaps = dedupeGaps(limitedGaps);
-
-    await deleteExistingGaps(user_id, run_id);
-    await insertGaps(user_id, run_id, uniqueGaps);
-
-    logger.info('Gap skills inserted', { inserted_count: uniqueGaps.length });
-
-    const response: GapResponse = {
-      user_id,
-      run_id,
-      inserted_count: uniqueGaps.length,
-      gaps: uniqueGaps
-    };
-
+    const response = await runGapAnalysisInternal(parsed.data);
     res.status(200).json(response);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';

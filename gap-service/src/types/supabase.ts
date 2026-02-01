@@ -156,7 +156,7 @@ export type Database = {
           score: number | null;
           evidence: string | null;
           created_at: string | null;
-          run_id: string;
+          run_id?: string | null;
           expertise_level: string | null;
           dream_role: string | null;
         };
@@ -168,7 +168,7 @@ export type Database = {
           score?: number | null;
           evidence?: string | null;
           created_at?: string | null;
-          run_id: string;
+          run_id?: string | null;
           expertise_level?: string | null;
           dream_role?: string | null;
         };
@@ -180,7 +180,7 @@ export type Database = {
           score?: number | null;
           evidence?: string | null;
           created_at?: string | null;
-          run_id?: string;
+          run_id?: string | null;
           expertise_level?: string | null;
           dream_role?: string | null;
         };

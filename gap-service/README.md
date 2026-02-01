@@ -109,6 +109,19 @@ Request body:
 }
 ```
 
+## Orchestrated Course Recommendations
+
+`POST /course-recommendations/generate`
+
+- This endpoint now orchestrates the full pipeline:
+  1) If market skills are missing, it fetches job postings (Adzuna) and extracts market skills
+  2) Runs gap analysis
+  3) Generates course recommendations
+
+Required extra env vars for market skills:
+- `ADZUNA_APP_ID`
+- `ADZUNA_APP_KEY`
+
 Response:
 ```json
 {
