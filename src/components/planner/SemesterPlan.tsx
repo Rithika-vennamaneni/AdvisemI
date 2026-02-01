@@ -21,7 +21,7 @@ const formatTerm = (term: string) => {
 export function SemesterPlan({ term, courses, onDrop, onRemove, maxCredits }: SemesterPlanProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   
-  const totalCredits = courses.reduce((sum, c) => sum + c.credits, 0);
+  const totalCredits = courses.reduce((sum, c) => sum + (c.credits || 0), 0);
   const creditStatus = totalCredits >= maxCredits ? 'full' : totalCredits >= maxCredits * 0.75 ? 'almost' : 'open';
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -100,9 +100,11 @@ export function SemesterPlan({ term, courses, onDrop, onRemove, maxCredits }: Se
                     <span className="font-medium text-sm">
                       {course.subject} {course.number}
                     </span>
-                    <Badge variant="secondary" className="text-xs">
-                      {course.credits} cr
-                    </Badge>
+                    {course.credits && (
+                      <Badge variant="secondary" className="text-xs">
+                        {course.credits} cr
+                      </Badge>
+                    )}
                   </div>
                   <p className="text-xs text-muted-foreground mt-0.5 truncate">
                     {course.title}

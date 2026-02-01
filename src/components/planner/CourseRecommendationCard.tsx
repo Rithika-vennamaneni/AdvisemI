@@ -46,9 +46,11 @@ export function CourseRecommendationCard({
               <h3 className="text-lg font-semibold">
                 {course.subject} {course.number}
               </h3>
-              <span className="text-sm text-muted-foreground">
-                {course.credits} credits
-              </span>
+              {course.credits && (
+                <span className="text-sm text-muted-foreground">
+                  {course.credits} credits
+                </span>
+              )}
             </div>
             <p className="text-muted-foreground">{course.title}</p>
           </div>

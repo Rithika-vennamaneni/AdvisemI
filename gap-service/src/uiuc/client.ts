@@ -1,0 +1,209 @@
+import { XMLParser } from 'fast-xml-parser';
+import { logger } from '../util/logger.js';
+import type { UIUCCourse, UIUCSubject, UIUCCatalogResponse } from './types.js';
+
+const BASE_URL = 'http://courses.illinois.edu/cisapp/explorer';
+const parser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: '',
+  textNodeName: 'text',
+  parseAttributeValue: true,
+  trimValues: true,
+});
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+const fetchWithRetry = async (
+  url: string,
+  maxRetries = 3,
+  retryDelay = 1000
+): Promise<string> => {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'AdvisemI-Course-Recommender/1.0',
+        },
+      });
+
+      if (!response.ok) {
+        if (response.status === 429 && attempt < maxRetries) {
+          const delay = retryDelay * Math.pow(2, attempt - 1);
+          logger.warn(`Rate limited, retrying after ${delay}ms`, { attempt, url });
+          await sleep(delay);
+          continue;
+        }
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      return await response.text();
+    } catch (error) {
+      if (attempt === maxRetries) {
+        throw error;
+      }
+      const delay = retryDelay * Math.pow(2, attempt - 1);
+      logger.warn(`Request failed, retrying after ${delay}ms`, { attempt, error, url });
+      await sleep(delay);
+    }
+  }
+  throw new Error('Max retries exceeded');
+};
+
+export const fetchSubjects = async (year: string, semester: string): Promise<UIUCSubject[]> => {
+  const url = `${BASE_URL}/catalog/${year}/${semester}.xml?mode=summary`;
+  logger.info('Fetching subjects from UIUC API', { year, semester, url });
+
+  try {
+    const xmlText = await fetchWithRetry(url);
+    const parsed = parser.parse(xmlText) as { children?: { subject?: UIUCSubject | UIUCSubject[] } };
+
+    const subjects: UIUCSubject[] = [];
+    const subjectData = parsed.children?.subject;
+
+    if (!subjectData) {
+      logger.warn('No subjects found in response', { year, semester });
+      return [];
+    }
+
+    const subjectArray = Array.isArray(subjectData) ? subjectData : [subjectData];
+
+    for (const subj of subjectArray) {
+      if (subj && typeof subj === 'object' && 'code' in subj) {
+        subjects.push({
+          code: subj.code || '',
+          name: subj.name || subj.text || subj.code || '',
+        });
+      }
+    }
+
+    logger.info('Fetched subjects', { count: subjects.length, year, semester });
+    return subjects;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    logger.error('Failed to fetch subjects', { error: message, year, semester });
+    throw new Error(`Failed to fetch subjects: ${message}`);
+  }
+};
+
+export const fetchCoursesForSubject = async (
+  year: string,
+  semester: string,
+  subjectCode: string
+): Promise<UIUCCourse[]> => {
+  const url = `${BASE_URL}/catalog/${year}/${semester}/${subjectCode}.xml?mode=cascade`;
+  logger.info('Fetching courses for subject', { year, semester, subjectCode, url });
+
+  try {
+    const xmlText = await fetchWithRetry(url);
+    const parsed = parser.parse(xmlText) as UIUCCatalogResponse;
+
+    const courses: UIUCCourse[] = [];
+    const courseData = parsed.courses?.course;
+
+    if (!courseData) {
+      logger.debug('No courses found for subject', { subjectCode });
+      return [];
+    }
+
+    const courseArray = Array.isArray(courseData) ? courseData : [courseData];
+
+    for (const course of courseArray) {
+      if (!course || typeof course !== 'object') continue;
+
+      const courseId = course.id || '';
+      const courseNumber = courseId.split('/').pop() || '';
+      const courseUrl = course.href 
+        ? `http://courses.illinois.edu${course.href}`
+        : `${BASE_URL}/catalog/${year}/${semester}/${subjectCode}/${courseNumber}.xml`;
+
+      // Extract credits from creditHours or label
+      let credits: number | null = null;
+      if (course.creditHours) {
+        const creditMatch = course.creditHours.match(/(\d+(?:\.\d+)?)/);
+        if (creditMatch) {
+          credits = parseFloat(creditMatch[1]);
+        }
+      }
+
+      // Try to get description from nested structure
+      let description: string | null = null;
+      if (course.text) {
+        description = course.text;
+      }
+
+      courses.push({
+        subject: subjectCode,
+        number: courseNumber,
+        title: course.label || course.text || `${subjectCode} ${courseNumber}`,
+        description,
+        credits,
+        courseUrl,
+      });
+    }
+
+    logger.info('Fetched courses for subject', { 
+      subjectCode, 
+      count: courses.length, 
+      year, 
+      semester 
+    });
+    return courses;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    logger.error('Failed to fetch courses for subject', { 
+      error: message, 
+      subjectCode, 
+      year, 
+      semester 
+    });
+    // Don't throw - return empty array so other subjects can still be processed
+    return [];
+  }
+};
+
+export const fetchCourseDetails = async (
+  year: string,
+  semester: string,
+  subjectCode: string,
+  courseNumber: string
+): Promise<UIUCCourse | null> => {
+  const url = `${BASE_URL}/catalog/${year}/${semester}/${subjectCode}/${courseNumber}.xml?mode=detail`;
+  logger.debug('Fetching course details', { year, semester, subjectCode, courseNumber });
+
+  try {
+    const xmlText = await fetchWithRetry(url);
+    const parsed = parser.parse(xmlText) as any;
+
+    // Extract detailed course information
+    const course = parsed.course || parsed.children?.course;
+    if (!course) {
+      return null;
+    }
+
+    let credits: number | null = null;
+    if (course.creditHours) {
+      const creditMatch = String(course.creditHours).match(/(\d+(?:\.\d+)?)/);
+      if (creditMatch) {
+        credits = parseFloat(creditMatch[1]);
+      }
+    }
+
+    return {
+      subject: subjectCode,
+      number: courseNumber,
+      title: course.label || course.title || course.text || `${subjectCode} ${courseNumber}`,
+      description: course.description || course.text || null,
+      credits,
+      courseUrl: course.href 
+        ? `http://courses.illinois.edu${course.href}`
+        : url.replace('.xml', ''),
+    };
+  } catch (error) {
+    logger.warn('Failed to fetch course details', { 
+      error: error instanceof Error ? error.message : 'Unknown',
+      subjectCode, 
+      courseNumber 
+    });
+    return null;
+  }
+};

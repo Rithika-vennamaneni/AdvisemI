@@ -24,9 +24,11 @@ export function PlannedCourseCard({ course, onRemove, isNew = false }: PlannedCo
               <h4 className="font-semibold text-sm">
                 {course.subject} {course.number}
               </h4>
-              <Badge variant="secondary" className="text-xs">
-                {course.credits} cr
-              </Badge>
+              {course.credits && (
+                <Badge variant="secondary" className="text-xs">
+                  {course.credits} cr
+                </Badge>
+              )}
             </div>
             <p className="text-sm text-muted-foreground line-clamp-1">
               {course.title}

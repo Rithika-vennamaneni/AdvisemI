@@ -1,0 +1,328 @@
+import { z } from 'zod';
+import type { Request, Response } from 'express';
+import { supabase } from '../util/supabase.js';
+import { logger } from '../util/logger.js';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import { env } from '../env.js';
+import { safeJsonParse } from '../util/json.js';
+import { fetchSubjects, fetchCoursesForSubject } from '../uiuc/client.js';
+import { buildSubjectSelectionPrompt, type SubjectSelectionResult } from '../gemini/subjectPrompt.js';
+import { buildCourseMatchPrompt, type CourseMatchResult } from '../gemini/courseMatchPrompt.js';
+import type { GapSkill, CourseRecommendationRequest, CourseRecommendationResponse } from './types.js';
+import type { UIUCCourse } from '../uiuc/types.js';
+
+const requestSchema = z.object({
+  user_id: z.string().uuid(),
+  run_id: z.string().uuid(),
+  year: z.string().regex(/^\d{4}$/),
+  semester: z.enum(['spring', 'summer', 'fall']),
+  limit: z.number().int().min(1).max(50).optional().default(20),
+});
+
+const callGemini = async (prompt: string): Promise<string> => {
+  const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
+  const model = genAI.getGenerativeModel({ model: env.MODEL });
+  const result = await model.generateContent(prompt);
+  return result.response.text();
+};
+
+const fetchGapSkills = async (userId: string, runId: string): Promise<GapSkill[]> => {
+  const { data, error } = await supabase
+    .from('gap_skills')
+    .select('id, user_id, skill_name, priority, reason, run_id')
+    .eq('user_id', userId)
+    .eq('run_id', runId)
+    .order('priority', { ascending: true });
+
+  if (error) {
+    throw new Error(`Failed to fetch gap skills: ${error.message}`);
+  }
+
+  return (data || []) as GapSkill[];
+};
+
+const selectRelevantSubjects = async (gapSkills: GapSkill[]): Promise<string[]> => {
+  if (gapSkills.length === 0) {
+    return [];
+  }
+
+  const prompt = buildSubjectSelectionPrompt(gapSkills);
+  logger.info('Calling Gemini for subject selection', { gapSkillsCount: gapSkills.length });
+
+  try {
+    const responseText = await callGemini(prompt);
+    const parsed = safeJsonParse<SubjectSelectionResult>(responseText);
+
+    if (!parsed.ok) {
+      logger.warn('Failed to parse subject selection response', { error: parsed.error });
+      // Fallback to common technical subjects
+      return ['CS', 'ECE', 'MATH', 'STAT'];
+    }
+
+    const subjects = parsed.value.relevant_subjects
+      .filter((s) => s.relevance_score > 0.3)
+      .sort((a, b) => b.relevance_score - a.relevance_score)
+      .map((s) => s.subject_code.toUpperCase())
+      .slice(0, 10); // Limit to top 10
+
+    logger.info('Selected relevant subjects', { subjects, count: subjects.length });
+    return subjects.length > 0 ? subjects : ['CS', 'ECE', 'MATH', 'STAT'];
+  } catch (error) {
+    logger.error('Subject selection failed', { error: error instanceof Error ? error.message : 'Unknown' });
+    // Fallback to common technical subjects
+    return ['CS', 'ECE', 'MATH', 'STAT'];
+  }
+};
+
+const matchCourseToSkills = async (
+  course: UIUCCourse,
+  gapSkills: GapSkill[]
+): Promise<CourseMatchResult | null> => {
+  const prompt = buildCourseMatchPrompt(gapSkills, course);
+  
+  try {
+    const responseText = await callGemini(prompt);
+    const parsed = safeJsonParse<CourseMatchResult>(responseText);
+
+    if (!parsed.ok) {
+      logger.warn('Failed to parse course match response', { 
+        course: `${course.subject} ${course.number}`,
+        error: parsed.error 
+      });
+      return null;
+    }
+
+    const result = parsed.value;
+    
+    // Only return matches with reasonable confidence and score
+    if (result.match_score < 0.3 || result.confidence < 0.4) {
+      return null;
+    }
+
+    return result;
+  } catch (error) {
+    logger.warn('Course matching failed', { 
+      course: `${course.subject} ${course.number}`,
+      error: error instanceof Error ? error.message : 'Unknown' 
+    });
+    return null;
+  }
+};
+
+const upsertCourse = async (course: UIUCCourse, year: string, semester: string): Promise<string> => {
+  const term = `${year}-${semester}`;
+  const courseId = `${course.subject}-${course.number}-${term}`;
+
+  const { data, error } = await supabase
+    .from('courses')
+    .upsert(
+      {
+        id: courseId,
+        subject: course.subject,
+        number: course.number,
+        title: course.title,
+        description: course.description || null,
+        term,
+        course_url: course.courseUrl,
+        last_synced: new Date().toISOString(),
+      },
+      {
+        onConflict: 'id',
+      }
+    )
+    .select('id')
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to upsert course: ${error.message}`);
+  }
+
+  return data.id;
+};
+
+const insertRecommendations = async (
+  userId: string,
+  runId: string,
+  recommendations: Array<{
+    courseId: string;
+    score: number;
+    matchedGaps: string[];
+    explanation: string;
+  }>
+): Promise<void> => {
+  if (recommendations.length === 0) {
+    return;
+  }
+
+  const { error } = await supabase.from('recommendations').insert(
+    recommendations.map((rec) => ({
+      user_id: userId,
+      run_id: runId,
+      course_id: rec.courseId,
+      score: rec.score,
+      matched_gaps: rec.matchedGaps,
+      explanation: rec.explanation,
+    }))
+  );
+
+  if (error) {
+    throw new Error(`Failed to insert recommendations: ${error.message}`);
+  }
+};
+
+const deleteExistingRecommendations = async (userId: string, runId: string): Promise<void> => {
+  const { error } = await supabase
+    .from('recommendations')
+    .delete()
+    .eq('user_id', userId)
+    .eq('run_id', runId);
+
+  if (error) {
+    logger.warn('Failed to delete existing recommendations', { error: error.message });
+    // Don't throw - continue with insertion
+  }
+};
+
+export const generateCourseRecommendations = async (req: Request, res: Response): Promise<void> => {
+  const parsed = requestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid request body', details: parsed.error.flatten() });
+    return;
+  }
+
+  const { user_id, run_id, year, semester, limit }: CourseRecommendationRequest = parsed.data;
+
+  try {
+    logger.info('Starting course recommendation generation', { user_id, run_id, year, semester });
+
+    // Step 1: Fetch gap skills
+    const gapSkills = await fetchGapSkills(user_id, run_id);
+    if (gapSkills.length === 0) {
+      res.status(200).json({
+        user_id,
+        run_id,
+        courses_found: 0,
+        recommendations_created: 0,
+        recommendations: [],
+      });
+      return;
+    }
+
+    logger.info('Fetched gap skills', { count: gapSkills.length });
+
+    // Step 2: Use Gemini to identify relevant subjects
+    const relevantSubjects = await selectRelevantSubjects(gapSkills);
+    if (relevantSubjects.length === 0) {
+      res.status(200).json({
+        user_id,
+        run_id,
+        courses_found: 0,
+        recommendations_created: 0,
+        recommendations: [],
+      });
+      return;
+    }
+
+    // Step 3: Fetch courses from UIUC API (in parallel for each subject)
+    logger.info('Fetching courses from UIUC API', { subjects: relevantSubjects });
+    const coursePromises = relevantSubjects.map((subject) =>
+      fetchCoursesForSubject(year, semester, subject)
+    );
+    const courseArrays = await Promise.all(coursePromises);
+    const allCourses = courseArrays.flat();
+    
+    logger.info('Fetched courses from UIUC', { count: allCourses.length });
+
+    if (allCourses.length === 0) {
+      res.status(200).json({
+        user_id,
+        run_id,
+        courses_found: 0,
+        recommendations_created: 0,
+        recommendations: [],
+      });
+      return;
+    }
+
+    // Step 4: Match courses to gap skills using Gemini
+    logger.info('Matching courses to gap skills', { coursesCount: allCourses.length });
+    const matchPromises = allCourses.map((course) => matchCourseToSkills(course, gapSkills));
+    const matchResults = await Promise.all(matchPromises);
+
+    // Combine courses with their match results
+    const courseMatches = allCourses
+      .map((course, index) => ({
+        course,
+        match: matchResults[index],
+      }))
+      .filter((item) => item.match !== null) as Array<{
+      course: UIUCCourse;
+      match: CourseMatchResult;
+    }>;
+
+    logger.info('Matched courses', { matchedCount: courseMatches.length });
+
+    // Step 5: Rank and limit recommendations
+    const rankedMatches = courseMatches
+      .sort((a, b) => {
+        // Sort by match score (descending), then by number of matched gaps
+        if (Math.abs(a.match.match_score - b.match.match_score) > 0.01) {
+          return b.match.match_score - a.match.match_score;
+        }
+        return b.match.matched_gaps.length - a.match.matched_gaps.length;
+      })
+      .slice(0, limit);
+
+    // Step 6: Store courses and recommendations
+    logger.info('Storing courses and recommendations', { count: rankedMatches.length });
+
+    // Delete existing recommendations first
+    await deleteExistingRecommendations(user_id, run_id);
+
+    // Upsert courses and collect course IDs
+    const courseIdPromises = rankedMatches.map((item) =>
+      upsertCourse(item.course, year, semester)
+    );
+    const courseIds = await Promise.all(courseIdPromises);
+
+    // Insert recommendations
+    const recommendationsToInsert = rankedMatches.map((item, index) => ({
+      courseId: courseIds[index],
+      score: item.match.match_score,
+      matchedGaps: item.match.matched_gaps,
+      explanation: item.match.explanation,
+    }));
+
+    await insertRecommendations(user_id, run_id, recommendationsToInsert);
+
+    logger.info('Course recommendations generated successfully', {
+      coursesFound: allCourses.length,
+      recommendationsCreated: recommendationsToInsert.length,
+    });
+
+    // Step 7: Return response
+    const response: CourseRecommendationResponse = {
+      user_id,
+      run_id,
+      courses_found: allCourses.length,
+      recommendations_created: recommendationsToInsert.length,
+      recommendations: rankedMatches.map((item, index) => ({
+        course_id: courseIds[index],
+        course: {
+          subject: item.course.subject,
+          number: item.course.number,
+          title: item.course.title,
+        },
+        score: item.match.match_score,
+        matched_gaps: item.match.matched_gaps,
+        explanation: item.match.explanation,
+      })),
+    };
+
+    res.status(200).json(response);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    logger.error('Course recommendation generation failed', { error: message, user_id, run_id });
+    res.status(500).json({ error: 'Course recommendation generation failed', message });
+  }
+};

@@ -58,9 +58,11 @@ export function CourseTile({ course, recommendation, onAdd, isAdded = false }: C
                   {course.title}
                 </p>
               </div>
-              <Badge variant="secondary" className="flex-shrink-0">
-                {course.credits} cr
-              </Badge>
+              {course.credits && (
+                <Badge variant="secondary" className="flex-shrink-0">
+                  {course.credits} cr
+                </Badge>
+              )}
             </div>
 
             {/* Match Score */}

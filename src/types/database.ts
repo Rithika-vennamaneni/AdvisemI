@@ -41,10 +41,10 @@ export interface Course {
   subject: string;
   number: string;
   title: string;
-  description: string;
-  course_url: string;
-  credits: number;
-  last_synced: string;
+  description: string | null;
+  course_url: string | null;
+  credits?: number | null;
+  last_synced: string | null;
 }
 
 export interface Recommendation {

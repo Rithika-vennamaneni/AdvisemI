@@ -1,42 +1,128 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Header } from '@/components/layout/Header';
 import { CareerProgress } from '@/components/planner/CareerProgress';
 import { CourseRecommendationCard } from '@/components/planner/CourseRecommendationCard';
 import { SemesterPlan } from '@/components/planner/SemesterPlan';
-import { 
-  mockProfile,
-  mockGapSkills, 
-  mockSkills,
-  getRecommendationsWithCourses,
-  getCourseById,
-  courseSkillBoosts,
-} from '@/data/mockData';
-import type { Course } from '@/types/database';
+import { Button } from '@/components/ui/button';
+import { Loader2, RefreshCw } from 'lucide-react';
+import type { Course, GapSkill } from '@/types/database';
 import { useToast } from '@/hooks/use-toast';
+import { fetchGapSkills, fetchRecommendationsWithCourses, fetchProfile, parseTerm } from '@/lib/supabaseQueries';
+import { generateCourseRecommendations } from '@/lib/courseRecommendationApi';
+import type { RecommendationWithCourse } from '@/lib/supabaseQueries';
 
 const MAX_COURSES = 4;
 const MAX_CREDITS = 16;
+
+// TODO: Replace with actual user ID from auth
+const MOCK_USER_ID = 'user-demo-123';
+const MOCK_RUN_ID = 'run-demo-123'; // TODO: Get from latest run or create one
 
 export default function Planner() {
   const { toast } = useToast();
   const [plannedCourseIds, setPlannedCourseIds] = useState<string[]>([]);
   const [boostedSkills, setBoostedSkills] = useState<string[]>([]);
-  const [skillScores, setSkillScores] = useState<Record<string, number>>(() => {
-    const scores: Record<string, number> = {};
-    mockSkills.forEach(s => {
-      scores[s.skill_name] = s.score;
-    });
-    scores['SQL/Databases'] = scores['SQL'] || 0.45;
-    return scores;
-  });
-
-  const recommendations = getRecommendationsWithCourses();
+  const [skillScores, setSkillScores] = useState<Record<string, number>>({});
   
-  const plannedCourses: Course[] = plannedCourseIds
-    .map(id => getCourseById(id))
-    .filter((c): c is Course => c !== undefined);
+  // Data state
+  const [gapSkills, setGapSkills] = useState<GapSkill[]>([]);
+  const [recommendations, setRecommendations] = useState<RecommendationWithCourse[]>([]);
+  const [profile, setProfile] = useState<{ dream_role: string | null; term: string | null } | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isGenerating, setIsGenerating] = useState(false);
+  
+  // Load initial data
+  useEffect(() => {
+    loadData();
+  }, []);
 
-  const totalCredits = plannedCourses.reduce((sum, c) => sum + c.credits, 0);
+  const loadData = async () => {
+    setIsLoading(true);
+    try {
+      const [gapSkillsData, recommendationsData, profileData] = await Promise.all([
+        fetchGapSkills(MOCK_USER_ID, MOCK_RUN_ID),
+        fetchRecommendationsWithCourses(MOCK_USER_ID, MOCK_RUN_ID),
+        fetchProfile(MOCK_USER_ID),
+      ]);
+
+      setGapSkills(gapSkillsData);
+      setRecommendations(recommendationsData);
+      setProfile(profileData);
+
+      // Initialize skill scores from gap skills (for display purposes)
+      const scores: Record<string, number> = {};
+      gapSkillsData.forEach(skill => {
+        // Lower priority = higher gap = lower score
+        scores[skill.skill_name] = Math.max(0, 1 - (skill.priority * 0.1));
+      });
+      setSkillScores(scores);
+    } catch (error) {
+      console.error('Failed to load data:', error);
+      toast({
+        title: 'Failed to load data',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleGenerateRecommendations = async () => {
+    if (!profile?.term) {
+      toast({
+        title: 'Missing term information',
+        description: 'Please set your term in your profile first',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const termInfo = parseTerm(profile.term);
+    if (!termInfo) {
+      toast({
+        title: 'Invalid term format',
+        description: 'Term must be in format YYYY-semester (e.g., 2026-spring)',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsGenerating(true);
+    try {
+      await generateCourseRecommendations({
+        user_id: MOCK_USER_ID,
+        run_id: MOCK_RUN_ID,
+        year: termInfo.year,
+        semester: termInfo.semester,
+        limit: 20,
+      });
+
+      toast({
+        title: 'Recommendations generated',
+        description: 'Your course recommendations have been updated',
+      });
+
+      // Reload recommendations
+      const newRecommendations = await fetchRecommendationsWithCourses(MOCK_USER_ID, MOCK_RUN_ID);
+      setRecommendations(newRecommendations);
+    } catch (error) {
+      console.error('Failed to generate recommendations:', error);
+      toast({
+        title: 'Failed to generate recommendations',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+  
+  const plannedCourses: Course[] = recommendations
+    .filter(rec => plannedCourseIds.includes(rec.course.id))
+    .map(rec => rec.course);
+
+  const totalCredits = plannedCourses.reduce((sum, c) => sum + (c.credits || 0), 0);
 
   const addCourse = useCallback((courseId: string) => {
     if (plannedCourseIds.includes(courseId)) return;
@@ -49,10 +135,13 @@ export default function Planner() {
       return;
     }
 
-    const course = getCourseById(courseId);
-    if (!course) return;
+    const recommendation = recommendations.find(rec => rec.course.id === courseId);
+    if (!recommendation) return;
 
-    if (totalCredits + course.credits > MAX_CREDITS) {
+    const course = recommendation.course;
+    const courseCredits = course.credits || 0;
+
+    if (totalCredits + courseCredits > MAX_CREDITS) {
       toast({
         title: "Credit limit reached",
         description: `This would exceed the ${MAX_CREDITS} credit limit.`,
@@ -63,76 +152,51 @@ export default function Planner() {
 
     setPlannedCourseIds(prev => [...prev, courseId]);
 
-    // Apply skill boosts
-    const boosts = courseSkillBoosts[courseId];
-    if (boosts) {
-      // Track which skills are being boosted for animation
-      const boostKeys = Object.keys(boosts);
-      setBoostedSkills(boostKeys);
-      
-      // Clear boost highlight after animation
+    // Track matched gaps for animation
+    if (recommendation.matched_gaps.length > 0) {
+      setBoostedSkills(recommendation.matched_gaps);
       setTimeout(() => setBoostedSkills([]), 1500);
-
-      setSkillScores(prev => {
-        const updated = { ...prev };
-        Object.keys(boosts).forEach(skill => {
-          updated[skill] = Math.min(1, (updated[skill] || 0) + boosts[skill]);
-        });
-        return updated;
-      });
-
-      // Show percentage boost toast
-      const boostDescriptions = Object.entries(boosts)
-        .map(([skill, boost]) => `${skill} +${Math.round(boost * 100)}%`)
-        .join(', ');
-      
-      toast({
-        title: `Added ${course.subject} ${course.number}`,
-        description: boostDescriptions,
-      });
-    } else {
-      toast({
-        title: `Added ${course.subject} ${course.number}`,
-        description: course.title,
-      });
     }
-  }, [plannedCourseIds, totalCredits, toast]);
+
+    toast({
+      title: `Added ${course.subject} ${course.number}`,
+      description: course.title,
+    });
+  }, [plannedCourseIds, totalCredits, recommendations, toast]);
 
   const removeCourse = useCallback((courseId: string) => {
-    const course = getCourseById(courseId);
-    if (!course) return;
+    const recommendation = recommendations.find(rec => rec.course.id === courseId);
+    if (!recommendation) return;
 
+    const course = recommendation.course;
     setPlannedCourseIds(prev => prev.filter(id => id !== courseId));
 
-    const boosts = courseSkillBoosts[courseId];
-    if (boosts) {
-      // Track which skills are being reduced for animation
-      const boostKeys = Object.keys(boosts);
-      setBoostedSkills(boostKeys);
+    // Track matched gaps for animation
+    if (recommendation.matched_gaps.length > 0) {
+      setBoostedSkills(recommendation.matched_gaps);
       setTimeout(() => setBoostedSkills([]), 1500);
-
-      setSkillScores(prev => {
-        const updated = { ...prev };
-        Object.keys(boosts).forEach(skill => {
-          updated[skill] = Math.max(0, (updated[skill] || 0) - boosts[skill]);
-        });
-        return updated;
-      });
-
-      const reduceDescriptions = Object.entries(boosts)
-        .map(([skill, boost]) => `${skill} -${Math.round(boost * 100)}%`)
-        .join(', ');
-      
-      toast({
-        title: `Removed ${course.subject} ${course.number}`,
-        description: reduceDescriptions,
-      });
-    } else {
-      toast({
-        title: `Removed ${course.subject} ${course.number}`,
-      });
     }
-  }, [toast]);
+
+    toast({
+      title: `Removed ${course.subject} ${course.number}`,
+    });
+  }, [recommendations, toast]);
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background">
+        <Header />
+        <main className="container max-w-6xl px-4 py-8">
+          <div className="flex items-center justify-center min-h-[400px]">
+            <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  const dreamRole = profile?.dream_role || 'your target role';
+  const term = profile?.term || '2026-spring';
 
   return (
     <div className="min-h-screen bg-background">
@@ -142,8 +206,8 @@ export default function Planner() {
         {/* Zone 1: Career Progress Overview */}
         <section className="mb-12">
           <CareerProgress 
-            dreamRole={mockProfile.dream_role}
-            gapSkills={mockGapSkills}
+            dreamRole={dreamRole}
+            gapSkills={gapSkills}
             skillScores={skillScores}
             boostedSkills={boostedSkills}
           />
@@ -153,31 +217,85 @@ export default function Planner() {
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
           {/* Zone 2: Recommended Courses (Primary) */}
           <section className="lg:col-span-3 space-y-6">
-            <div>
-              <h2 className="text-lg font-semibold mb-1">Recommended for you</h2>
-              <p className="text-sm text-muted-foreground">
-                Based on your goal to become a {mockProfile.dream_role}, here are courses that will help you get there
-              </p>
+            <div className="flex items-start justify-between">
+              <div>
+                <h2 className="text-lg font-semibold mb-1">Recommended for you</h2>
+                <p className="text-sm text-muted-foreground">
+                  {dreamRole ? (
+                    <>Based on your goal to become a {dreamRole}, here are courses that will help you get there</>
+                  ) : (
+                    <>Courses recommended based on your skill gaps</>
+                  )}
+                </p>
+              </div>
+              <Button
+                onClick={handleGenerateRecommendations}
+                disabled={isGenerating || gapSkills.length === 0}
+                variant="outline"
+                size="sm"
+                className="gap-2"
+              >
+                {isGenerating ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Generating...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="w-4 h-4" />
+                    Generate
+                  </>
+                )}
+              </Button>
             </div>
             
-            <div className="space-y-5">
-              {recommendations.map((rec) => (
-                <CourseRecommendationCard
-                  key={rec.id}
-                  course={rec.course}
-                  recommendation={rec}
-                  onAdd={addCourse}
-                  isAdded={plannedCourseIds.includes(rec.course.id)}
-                />
-              ))}
-            </div>
+            {recommendations.length === 0 ? (
+              <div className="rounded-2xl border bg-card p-8 text-center">
+                <p className="text-muted-foreground mb-4">
+                  {gapSkills.length === 0 
+                    ? 'No skill gaps found. Upload a resume and run gap analysis first.'
+                    : 'No course recommendations yet. Click "Generate" to find courses that match your skill gaps.'}
+                </p>
+                {gapSkills.length > 0 && (
+                  <Button
+                    onClick={handleGenerateRecommendations}
+                    disabled={isGenerating}
+                    className="gap-2"
+                  >
+                    {isGenerating ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Generating recommendations...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="w-4 h-4" />
+                        Generate Recommendations
+                      </>
+                    )}
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-5">
+                {recommendations.map((rec) => (
+                  <CourseRecommendationCard
+                    key={rec.id}
+                    course={rec.course}
+                    recommendation={rec}
+                    onAdd={addCourse}
+                    isAdded={plannedCourseIds.includes(rec.course.id)}
+                  />
+                ))}
+              </div>
+            )}
           </section>
 
           {/* Zone 3: Semester Plan */}
           <section className="lg:col-span-2">
             <div className="lg:sticky lg:top-24">
               <SemesterPlan
-                term={mockProfile.term}
+                term={term}
                 courses={plannedCourses}
                 onDrop={addCourse}
                 onRemove={removeCourse}

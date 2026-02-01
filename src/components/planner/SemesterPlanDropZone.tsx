@@ -46,7 +46,7 @@ export function SemesterPlanDropZone({
     return `${semester.charAt(0).toUpperCase() + semester.slice(1)} ${year}`;
   };
 
-  const totalCredits = courses.reduce((sum, c) => sum + c.credits, 0);
+  const totalCredits = courses.reduce((sum, c) => sum + (c.credits || 0), 0);
 
   return (
     <div className="space-y-4">

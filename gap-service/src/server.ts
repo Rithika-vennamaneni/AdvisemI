@@ -9,6 +9,7 @@ import { saveProfileHandler } from './profile/handler.js';
 import { recommendCoursesHandler } from './courses/recommend.js';
 import { createGuestSessionHandler } from './session/guest.js';
 import { updateSkillLevelsHandler } from './skills/updateLevels.js';
+import { generateCourseRecommendations } from './course-recommendation/handler.js';
 import type { ErrorRequestHandler } from 'express';
 
 const app = express();
@@ -34,6 +35,7 @@ app.post('/profile', saveProfileHandler);
 app.post('/courses/recommend', recommendCoursesHandler);
 app.post('/session/guest', createGuestSessionHandler);
 app.post('/skills/update-levels', updateSkillLevelsHandler);
+app.post('/course-recommendations/generate', generateCourseRecommendations);
 
 const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
   if (err instanceof multer.MulterError) {
