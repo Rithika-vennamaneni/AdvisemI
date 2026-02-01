@@ -8,6 +8,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { cn } from '@/lib/utils';
 import { Header } from '@/components/layout/Header';
 import { parseResumePdf } from '@/lib/resumeParserApi';
+import { getOrCreateGuestUserId } from '@/lib/guestSession';
 
 export default function ResumeUpload() {
   const navigate = useNavigate();
@@ -54,11 +55,12 @@ export default function ResumeUpload() {
         throw new Error('Please upload a PDF resume to extract skills.');
       }
 
-      const parsed = await parseResumePdf(file);
+      const userId = await getOrCreateGuestUserId();
+      const parsed = await parseResumePdf(file, { userId });
       console.log('Parsed resume payload (frontend):', parsed);
 
       // Backend integration: pass parsed JSON to the skills page
-      navigate('/skills', { state: { parsedResume: parsed } });
+      navigate('/skills', { state: { parsedResume: parsed, run_id: parsed.run_id ?? null, user_id: parsed.user_id ?? userId } });
     } catch (e) {
       console.error('Resume parse failed:', e);
       setError(e instanceof Error ? e.message : 'Resume parse failed');

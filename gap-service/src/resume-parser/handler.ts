@@ -1,13 +1,15 @@
 import type { Request, Response } from 'express';
-import { randomUUID } from 'crypto';
 import { z } from 'zod';
-import { extractCanonicalSkills } from './skills.js';
+import { categorizeSkills, extractCanonicalSkills } from './skills.js';
 import { parsePdfBuffer } from './parser.js';
 import { logger } from '../util/logger.js';
-import { env } from '../env.js';
-import { supabase } from '../util/supabase.js';
+import { resolveUserId } from '../util/auth.js';
 import { createOrGetRun, saveResumeDocument, saveResumeSkills } from './persist.js';
+import { extractCandidateSkills, selectTopSkills } from './llm.js';
+import { supabase } from '../util/supabase.js';
 import type { ResumeParseResult } from './types.js';
+import { groupLearningSkills } from '../util/learningSkills.js';
+import { normalizeSkillName } from '../util/strings.js';
 
 const isPdf = (mimetype?: string): boolean => {
   if (!mimetype) return false;
@@ -16,51 +18,19 @@ const isPdf = (mimetype?: string): boolean => {
 
 type MulterRequest = Request & { file?: Express.Multer.File };
 
-const findUserIdByEmail = async (email: string): Promise<string | null> => {
-  const { data, error } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
-  if (error) {
-    logger.warn('Failed to list users for email lookup', { error: error.message });
-    return null;
+const dedupeSkills = (skills: string[], limit = 10): string[] => {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const skill of skills) {
+    const trimmed = skill.trim();
+    if (!trimmed) continue;
+    const key = normalizeSkillName(trimmed);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(trimmed);
+    if (output.length >= limit) break;
   }
-  const matched = data.users.find((user) => user.email === email);
-  return matched?.id ?? null;
-};
-
-const resolveUserId = async (userId?: string): Promise<string | null> => {
-  if (userId) return userId;
-
-  if (env.DEFAULT_USER_ID) {
-    const { data, error } = await supabase.auth.admin.getUserById(env.DEFAULT_USER_ID);
-    if (data?.user?.id) {
-      return data.user.id;
-    }
-    if (error) {
-      logger.warn('DEFAULT_USER_ID not found', { error: error.message });
-    }
-  }
-
-  const email = env.DEFAULT_USER_EMAIL ?? `dev+${randomUUID()}@example.com`;
-  const password = env.DEFAULT_USER_PASSWORD ?? randomUUID();
-
-  const existingId = await findUserIdByEmail(email);
-  if (existingId) {
-    logger.warn('Using existing fallback user', { user_id: existingId });
-    return existingId;
-  }
-
-  const { data, error } = await supabase.auth.admin.createUser({
-    email,
-    password,
-    email_confirm: true
-  });
-
-  if (error || !data?.user?.id) {
-    logger.error('Failed to create fallback user', { error: error?.message ?? 'Unknown error' });
-    return null;
-  }
-
-  logger.warn('Created fallback user for resume persistence', { user_id: data.user.id });
-  return data.user.id;
+  return output;
 };
 
 export const parseResumeHandler = async (req: Request, res: Response): Promise<void> => {
@@ -92,16 +62,50 @@ export const parseResumeHandler = async (req: Request, res: Response): Promise<v
 
   try {
     const text = await parsePdfBuffer(request.file.buffer);
-    const canonical_skills = extractCanonicalSkills(text);
+    let resolvedRole = dream_role;
+    if (!resolvedRole && resolvedUserId) {
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('dream_role')
+        .eq('user_id', resolvedUserId)
+        .maybeSingle();
+      if (profileError) {
+        logger.warn('Failed to load profile dream_role', { error: profileError.message });
+      }
+      resolvedRole = profile?.dream_role ?? undefined;
+    }
+
+    const candidateSkills = await extractCandidateSkills(text);
+    let topSkills: string[] | null = null;
+
+    if (candidateSkills && candidateSkills.length > 0) {
+      const roleForPrompt =
+        resolvedRole && resolvedRole.trim().length > 0 ? resolvedRole : 'the target role';
+      topSkills = await selectTopSkills(roleForPrompt, candidateSkills);
+    }
+
+    if (!topSkills || topSkills.length === 0) {
+      const fallback = extractCanonicalSkills(text);
+      const fallbackList = Object.values(fallback).flat();
+      topSkills = fallbackList.slice(0, 10);
+    }
+
+    const finalTopSkills = dedupeSkills(topSkills ?? [], 10);
+    const canonical_skills = categorizeSkills(finalTopSkills);
+    const learning_skills = groupLearningSkills(finalTopSkills);
     const response: ResumeParseResult = {
       education: [],
       work_experience: [],
       projects: [],
-      canonical_skills
+      canonical_skills,
+      top_skills: finalTopSkills,
+      learning_skills
     };
 
     logger.info('Resume parsed', {
       bytes: request.file.size,
+      candidate_skills: candidateSkills?.length ?? 0,
+      top_skills: finalTopSkills.length,
       skills_found: Object.values(canonical_skills).reduce((sum, skills) => sum + skills.length, 0)
     });
 
@@ -110,7 +114,7 @@ export const parseResumeHandler = async (req: Request, res: Response): Promise<v
     if (resolvedUserId) {
       const resolvedRunId = await createOrGetRun({
         user_id: resolvedUserId,
-        dream_role,
+        dream_role: resolvedRole,
         term,
         run_id
       });
@@ -121,26 +125,26 @@ export const parseResumeHandler = async (req: Request, res: Response): Promise<v
         raw_text: text
       });
 
-      const skillRows = Object.values(canonical_skills)
-        .flat()
-        .map((skill) => ({ skill_name: skill }));
+      const skillRows = finalTopSkills.map((skill) => ({ skill_name: skill }));
 
       const skillsSaved = await saveResumeSkills({
         user_id: resolvedUserId,
         run_id: resolvedRunId,
-        dream_role,
+        dream_role: resolvedRole,
         skills: skillRows
       });
 
       saved = { run_id: resolvedRunId, documents_saved: 1, skills_saved: skillsSaved };
     } else {
       logger.warn('Resume parsed without persistence (missing user_id)');
+      res.status(400).json({ detail: 'user_id is required to persist resume data' });
+      return;
     }
 
     res.status(200).json({ ...response, user_id: resolvedUserId, ...saved });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown parse error';
     logger.error('Resume parse failed', { error: message });
-    res.status(500).json({ detail: 'Resume parse failed.' });
+    res.status(500).json({ detail: `Resume parse failed: ${message}` });
   }
 };

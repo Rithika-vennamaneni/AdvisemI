@@ -5,6 +5,8 @@ import { StepIndicator } from '@/components/career-setup/StepIndicator';
 import { RoleStep } from '@/components/career-setup/RoleStep';
 import { PreferencesStep } from '@/components/career-setup/PreferencesStep';
 import type { CareerPreferences } from '@/data/careerOptions';
+import { saveProfile } from '@/lib/profileApi';
+import { getOrCreateGuestUserId } from '@/lib/guestSession';
 
 const TOTAL_STEPS = 2;
 
@@ -18,9 +20,20 @@ export default function CareerSetup() {
     timeline: '',
   });
 
-  const handleComplete = () => {
+  const handleComplete = async () => {
     // Store preferences (would go to context/database in production)
     console.log('Career preferences:', preferences);
+    if (preferences.jobRole.trim()) {
+      try {
+        const userId = await getOrCreateGuestUserId();
+        await saveProfile({
+          dream_role: preferences.jobRole.trim(),
+          term: preferences.timeline.trim() || undefined
+        }, userId);
+      } catch (error) {
+        console.error('Failed to save profile:', error);
+      }
+    }
     navigate('/upload');
   };
 

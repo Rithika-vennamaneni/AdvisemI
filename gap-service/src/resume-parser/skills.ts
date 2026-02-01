@@ -1,6 +1,7 @@
-import type { CanonicalSkills } from './types.js';
+import type { CanonicalSkillCategory, CanonicalSkills } from './types.js';
+import { normalizeSkillName, trimSkillName } from '../util/strings.js';
 
-const skillDictionary: CanonicalSkills = {
+export const SKILL_DICTIONARY: CanonicalSkills = {
   programming_languages: [
     'JavaScript',
     'TypeScript',
@@ -173,13 +174,74 @@ export const extractCanonicalSkills = (rawText: string): CanonicalSkills => {
     other: []
   };
 
-  (Object.keys(skillDictionary) as Array<keyof CanonicalSkills>).forEach((category) => {
-    const skills = skillDictionary[category];
+  (Object.keys(SKILL_DICTIONARY) as Array<keyof CanonicalSkills>).forEach((category) => {
+    const skills = SKILL_DICTIONARY[category];
     skills.forEach((skill) => {
       if (matchesSkill(text, wordText, skill)) {
         result[category].push(skill);
       }
     });
+  });
+
+  return result;
+};
+
+const CATEGORY_ORDER: CanonicalSkillCategory[] = [
+  'programming_languages',
+  'frameworks',
+  'tools',
+  'databases',
+  'data_skills',
+  'ml_ai',
+  'cloud',
+  'operating_systems',
+  'soft_skills',
+  'domain_skills',
+  'other'
+];
+
+const buildSkillIndex = (): Map<string, CanonicalSkillCategory> => {
+  const index = new Map<string, CanonicalSkillCategory>();
+  CATEGORY_ORDER.forEach((category) => {
+    if (category === 'other') return;
+    const skills = SKILL_DICTIONARY[category];
+    skills.forEach((skill) => {
+      const key = normalizeSkillName(skill);
+      if (!index.has(key)) {
+        index.set(key, category);
+      }
+    });
+  });
+  return index;
+};
+
+const SKILL_INDEX = buildSkillIndex();
+
+export const categorizeSkills = (skills: string[]): CanonicalSkills => {
+  const result: CanonicalSkills = {
+    programming_languages: [],
+    frameworks: [],
+    tools: [],
+    databases: [],
+    data_skills: [],
+    ml_ai: [],
+    cloud: [],
+    operating_systems: [],
+    soft_skills: [],
+    domain_skills: [],
+    other: []
+  };
+
+  const seen = new Set<string>();
+
+  skills.forEach((skill) => {
+    const trimmed = trimSkillName(skill);
+    if (!trimmed) return;
+    const key = normalizeSkillName(trimmed);
+    if (seen.has(key)) return;
+    seen.add(key);
+    const category = SKILL_INDEX.get(key) ?? 'other';
+    result[category].push(trimmed);
   });
 
   return result;

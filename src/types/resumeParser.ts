@@ -37,9 +37,23 @@ export interface ResumeProjectItem {
 
 export type CanonicalSkills = Record<CanonicalSkillCategory, string[]>;
 
+export interface LearningSkill {
+  name: string;
+  covers: string[];
+}
+
 export interface ResumeParseResult {
   education: ResumeEducationItem[];
   work_experience: ResumeWorkExperienceItem[];
   projects: ResumeProjectItem[];
   canonical_skills: CanonicalSkills;
+  top_skills?: string[];
+  learning_skills?: LearningSkill[];
+}
+
+export interface ResumeParseResponse extends ResumeParseResult {
+  user_id?: string | null;
+  run_id?: string | null;
+  documents_saved?: number;
+  skills_saved?: number;
 }

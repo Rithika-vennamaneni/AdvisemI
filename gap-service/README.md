@@ -57,6 +57,7 @@ Response:
 - Accepts `multipart/form-data` with `file` (PDF)
 - Optional form fields: `user_id`, `run_id`, `dream_role`, `term`
 - Returns a JSON payload compatible with the frontend `ResumeParseResult` shape
+- Response includes `top_skills` (flat list) and `learning_skills` (grouped for course search)
 
 Example (curl):
 ```bash
@@ -70,6 +71,60 @@ curl -X POST http://localhost:8787/parse \\
 
 - If `user_id` is provided, the parser will create or reuse a `runs` row, store the raw resume text in `documents` (type `resume`), and insert `skills` with source `resume`.
 - The operation is idempotent per `run_id` (existing resume documents and skills are replaced).
+- Resume skills are extracted via a fast 2-step Gemini flow (candidates → top 10); if Gemini fails, a deterministic dictionary fallback is used.
+- Only the final top 10 skills are persisted to `skills` with source `resume`.
+
+## Profile Endpoint
+
+`POST /profile`
+
+Request body:
+```json
+{
+  "user_id": "<uuid>",
+  "dream_role": "Software Engineer",
+  "term": "1-year"
+}
+```
+
+Response:
+```json
+{
+  "user_id": "<uuid>",
+  "dream_role": "Software Engineer",
+  "term": "1-year"
+}
+```
+
+## Course Recommendation Endpoint
+
+`POST /courses/recommend`
+
+Request body:
+```json
+{
+  "user_id": "<uuid>",
+  "run_id": "<uuid>",
+  "limit": 10
+}
+```
+
+Response:
+```json
+{
+  "user_id": "<uuid>",
+  "run_id": "<uuid>",
+  "inserted_count": 10,
+  "recommendations": [
+    {
+      "course": { "subject": "CS", "number": "411", "title": "Database Systems", "course_url": "..." },
+      "score": 12,
+      "matched_gaps": ["SQL", "PostgreSQL"],
+      "explanation": "Addresses gaps in SQL, PostgreSQL through coursework aligned to these skills."
+    }
+  ]
+}
+```
 
 ## Notes
 

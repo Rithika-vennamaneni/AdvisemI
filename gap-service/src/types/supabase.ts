@@ -57,6 +57,96 @@ export type Database = {
         };
         Relationships: [];
       };
+      profiles: {
+        Row: {
+          id: string;
+          user_id: string;
+          dream_role: string | null;
+          term: string | null;
+          created_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          dream_role?: string | null;
+          term?: string | null;
+          created_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          dream_role?: string | null;
+          term?: string | null;
+          created_at?: string | null;
+        };
+        Relationships: [];
+      };
+      courses: {
+        Row: {
+          id: string;
+          term: string;
+          subject: string;
+          number: string;
+          title: string | null;
+          description: string | null;
+          course_url: string | null;
+          last_synced: string | null;
+        };
+        Insert: {
+          id?: string;
+          term: string;
+          subject: string;
+          number: string;
+          title?: string | null;
+          description?: string | null;
+          course_url?: string | null;
+          last_synced?: string | null;
+        };
+        Update: {
+          id?: string;
+          term?: string;
+          subject?: string;
+          number?: string;
+          title?: string | null;
+          description?: string | null;
+          course_url?: string | null;
+          last_synced?: string | null;
+        };
+        Relationships: [];
+      };
+      recommendations: {
+        Row: {
+          id: string;
+          user_id: string;
+          run_id: string | null;
+          course_id: string;
+          score: number | null;
+          matched_gaps: Json;
+          explanation: string | null;
+          created_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          run_id?: string | null;
+          course_id: string;
+          score?: number | null;
+          matched_gaps?: Json;
+          explanation?: string | null;
+          created_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          run_id?: string | null;
+          course_id?: string;
+          score?: number | null;
+          matched_gaps?: Json;
+          explanation?: string | null;
+          created_at?: string | null;
+        };
+        Relationships: [];
+      };
       skills: {
         Row: {
           id: string;

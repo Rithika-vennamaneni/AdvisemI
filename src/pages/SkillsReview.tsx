@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Plus, ArrowLeft, ArrowRight, Sparkles, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -10,12 +10,17 @@ import { mockSkills } from '@/data/mockData';
 import type { Skill } from '@/types/database';
 import type { SkillsReviewLocationState } from '@/types/navigation';
 import type { CanonicalSkillCategory } from '@/types/resumeParser';
+import { updateSkillLevels, type SkillLevelUpdate } from '@/lib/skillsApi';
+import { useToast } from '@/hooks/use-toast';
 
 export default function SkillsReview() {
   const navigate = useNavigate();
   const location = useLocation();
   const state = (location.state || {}) as SkillsReviewLocationState;
   const parsedResume = state.parsedResume;
+  const runId = state.run_id ?? null;
+  const userId = state.user_id ?? null;
+  const { toast } = useToast();
 
   const parsedSkills = useMemo(() => {
     if (!parsedResume?.canonical_skills) return null;
@@ -54,6 +59,12 @@ export default function SkillsReview() {
   const [newSkillName, setNewSkillName] = useState('');
   const [isAddingSkill, setIsAddingSkill] = useState(false);
 
+  useEffect(() => {
+    if (parsedSkills) {
+      setSkills(parsedSkills);
+    }
+  }, [parsedSkills]);
+
   const handleUpdateSkill = (id: string, updates: Partial<Skill>) => {
     setSkills(prev => prev.map(s => 
       s.id === id ? { ...s, ...updates } : s
@@ -62,6 +73,35 @@ export default function SkillsReview() {
 
   const handleRemoveSkill = (id: string) => {
     setSkills(prev => prev.filter(s => s.id !== id));
+  };
+
+  const handleSaveLevels = async () => {
+    if (!userId || !runId) {
+      toast({ title: 'Cannot save yet', description: 'Missing user or run id.' });
+      return;
+    }
+
+    const updates: SkillLevelUpdate[] = skills
+      .filter((skill) => skill.source === 'resume' && skill.expertise_level)
+      .map((skill) => ({
+        skill_name: skill.skill_name,
+        expertise_level: skill.expertise_level as SkillLevelUpdate['expertise_level']
+      }));
+
+    if (updates.length === 0) {
+      toast({ title: 'No changes to save', description: 'Adjust a skill level first.' });
+      return;
+    }
+
+    try {
+      const response = await updateSkillLevels(userId, runId, updates);
+      toast({ title: 'Skills saved', description: `${response.updated_count} skill levels updated.` });
+      if (response.not_found.length > 0) {
+        toast({ title: 'Some skills not found', description: response.not_found.join(', ') });
+      }
+    } catch (error) {
+      toast({ title: 'Save failed', description: error instanceof Error ? error.message : 'Unknown error' });
+    }
   };
 
   const handleAddSkill = () => {
@@ -176,10 +216,15 @@ export default function SkillsReview() {
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back
           </Button>
-          <Button size="lg" onClick={() => navigate('/planner')} className="rounded-full px-8 gap-2">
+          <div className="flex items-center gap-3">
+            <Button variant="outline" onClick={handleSaveLevels}>
+              Save Skill Levels
+            </Button>
+            <Button size="lg" onClick={() => navigate('/planner')} className="rounded-full px-8 gap-2">
             See Recommended Courses
             <ArrowRight className="w-4 h-4" />
           </Button>
+          </div>
         </div>
       </main>
     </div>

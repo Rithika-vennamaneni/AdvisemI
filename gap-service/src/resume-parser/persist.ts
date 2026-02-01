@@ -134,7 +134,6 @@ export const saveResumeSkills = async (input: SaveSkillsInput): Promise<number> 
     .from('skills')
     .delete()
     .eq('user_id', user_id)
-    .eq('run_id', run_id)
     .eq('source', 'resume');
 
   if (deleteError) {
