@@ -1,4 +1,4 @@
-import { trimSkillName } from '../util/strings.js';
+import { normalizeSkillName, trimSkillName } from '../util/strings.js';
 import type { MarketSkillDistinct, MarketSkillRow, PreprocessedSkills, ResumeSkill, ResumeSkillRow } from './types.js';
 
 const addEvidence = (list: string[], evidence: string | null): void => {
@@ -35,7 +35,11 @@ export const preprocessSkills = (
     if (!trimmed) {
       continue;
     }
-    const existing = marketMap.get(trimmed) ?? {
+    const key = normalizeSkillName(trimmed);
+    if (!key) {
+      continue;
+    }
+    const existing = marketMap.get(key) ?? {
       market_skill_raw: trimmed,
       frequency: 0,
       scores: [],
@@ -44,7 +48,7 @@ export const preprocessSkills = (
     existing.frequency += 1;
     addScore(existing.scores, row.score);
     addEvidence(existing.evidence_samples, row.evidence);
-    marketMap.set(trimmed, existing);
+    marketMap.set(key, existing);
   }
 
   const marketSkillsDistinct = Array.from(marketMap.values());

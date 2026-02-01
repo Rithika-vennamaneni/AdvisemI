@@ -6,6 +6,7 @@ import { preprocessSkills } from './preprocess.js';
 import { runGeminiGapAnalysis } from '../gemini/client.js';
 import { computeGapsDeterministic, computeGapsFromGemini, orderAndLimitGaps } from './analysis.js';
 import type { MarketSkillRow, ResumeSkillRow } from './types.js';
+import { normalizeSkillName } from '../util/strings.js';
 
 const requestSchema = z.object({
   user_id: z.string().uuid(),
@@ -22,6 +23,15 @@ type GapResponse = {
   gaps: Array<{ skill_name: string; priority: number; reason: string }>;
 };
 
+const isMissingRunIdColumn = (message: string | undefined): boolean => {
+  if (!message) return false;
+  const lower = message.toLowerCase();
+  return (
+    lower.includes('run_id') &&
+    (lower.includes('does not exist') || lower.includes('could not find') || lower.includes('schema cache'))
+  );
+};
+
 const fetchResumeSkills = async (userId: string, runId: string): Promise<ResumeSkillRow[]> => {
   const { data, error } = await supabase
     .from('skills')
@@ -31,10 +41,29 @@ const fetchResumeSkills = async (userId: string, runId: string): Promise<ResumeS
     .eq('source', 'resume');
 
   if (error) {
-    throw new Error(`Failed to fetch resume skills: ${error.message}`);
+    if (isMissingRunIdColumn(error.message)) {
+      logger.warn('skills.run_id column missing, falling back to user_id only', { error: error.message });
+    } else {
+      throw new Error(`Failed to fetch resume skills: ${error.message}`);
+    }
   }
 
-  return data ?? [];
+  if (data && data.length > 0) {
+    return data;
+  }
+
+  logger.warn('No resume skills found for run_id, falling back to user_id', { user_id: userId, run_id: runId });
+  const { data: fallback, error: fallbackError } = await supabase
+    .from('skills')
+    .select('skill_name, score, evidence, expertise_level')
+    .eq('user_id', userId)
+    .eq('source', 'resume');
+
+  if (fallbackError) {
+    throw new Error(`Failed to fetch resume skills (fallback): ${fallbackError.message}`);
+  }
+
+  return fallback ?? [];
 };
 
 const fetchMarketSkills = async (userId: string, runId: string): Promise<MarketSkillRow[]> => {
@@ -46,10 +75,29 @@ const fetchMarketSkills = async (userId: string, runId: string): Promise<MarketS
     .eq('source', 'market');
 
   if (error) {
-    throw new Error(`Failed to fetch market skills: ${error.message}`);
+    if (isMissingRunIdColumn(error.message)) {
+      logger.warn('skills.run_id column missing, falling back to user_id only', { error: error.message });
+    } else {
+      throw new Error(`Failed to fetch market skills: ${error.message}`);
+    }
   }
 
-  return data ?? [];
+  if (data && data.length > 0) {
+    return data;
+  }
+
+  logger.warn('No market skills found for run_id, falling back to user_id', { user_id: userId, run_id: runId });
+  const { data: fallback, error: fallbackError } = await supabase
+    .from('skills')
+    .select('skill_name, score, evidence')
+    .eq('user_id', userId)
+    .eq('source', 'market');
+
+  if (fallbackError) {
+    throw new Error(`Failed to fetch market skills (fallback): ${fallbackError.message}`);
+  }
+
+  return fallback ?? [];
 };
 
 const deleteExistingGaps = async (userId: string, runId: string): Promise<void> => {
@@ -60,6 +108,17 @@ const deleteExistingGaps = async (userId: string, runId: string): Promise<void> 
     .eq('run_id', runId);
 
   if (error) {
+    if (isMissingRunIdColumn(error.message)) {
+      logger.warn('gap_skills.run_id column missing, deleting by user_id only', { error: error.message });
+      const { error: fallbackError } = await supabase
+        .from('gap_skills')
+        .delete()
+        .eq('user_id', userId);
+      if (fallbackError) {
+        throw new Error(`Failed to delete existing gap skills (fallback): ${fallbackError.message}`);
+      }
+      return;
+    }
     throw new Error(`Failed to delete existing gap skills: ${error.message}`);
   }
 };
@@ -73,19 +132,47 @@ const insertGaps = async (
     return;
   }
 
-  const { error } = await supabase.from('gap_skills').insert(
-    gaps.map((gap) => ({
-      user_id: userId,
-      run_id: runId,
-      skill_name: gap.skill_name,
-      priority: gap.priority,
-      reason: gap.reason
-    }))
-  );
+  const rows = gaps.map((gap) => ({
+    user_id: userId,
+    run_id: runId,
+    skill_name: gap.skill_name,
+    priority: gap.priority,
+    reason: gap.reason
+  }));
+
+  const { error } = await supabase.from('gap_skills').insert(rows);
 
   if (error) {
+    if (isMissingRunIdColumn(error.message)) {
+      logger.warn('gap_skills.run_id column missing, inserting without run_id', { error: error.message });
+      const fallbackRows = gaps.map((gap) => ({
+        user_id: userId,
+        skill_name: gap.skill_name,
+        priority: gap.priority,
+        reason: gap.reason
+      }));
+      const { error: fallbackError } = await supabase.from('gap_skills').insert(fallbackRows);
+      if (fallbackError) {
+        throw new Error(`Failed to insert gap skills (fallback): ${fallbackError.message}`);
+      }
+      return;
+    }
     throw new Error(`Failed to insert gap skills: ${error.message}`);
   }
+};
+
+const dedupeGaps = (
+  gaps: Array<{ skill_name: string; priority: number; reason: string }>
+): Array<{ skill_name: string; priority: number; reason: string }> => {
+  const seen = new Set<string>();
+  const output: Array<{ skill_name: string; priority: number; reason: string }> = [];
+  for (const gap of gaps) {
+    const key = normalizeSkillName(gap.skill_name);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(gap);
+  }
+  return output;
 };
 
 export const runGapAnalysis = async (req: Request, res: Response): Promise<void> => {
@@ -107,6 +194,12 @@ export const runGapAnalysis = async (req: Request, res: Response): Promise<void>
       resume_count: resumeRows.length,
       market_count: marketRows.length
     });
+
+    if (marketRows.length === 0) {
+      await deleteExistingGaps(user_id, run_id);
+      res.status(200).json({ user_id, run_id, inserted_count: 0, gaps: [] });
+      return;
+    }
 
     const { resumeSkills, marketSkillsDistinct, marketSkillInputSet } = preprocessSkills(
       resumeRows,
@@ -139,16 +232,18 @@ export const runGapAnalysis = async (req: Request, res: Response): Promise<void>
       reason: gap.reason
     }));
 
-    await deleteExistingGaps(user_id, run_id);
-    await insertGaps(user_id, run_id, limitedGaps);
+    const uniqueGaps = dedupeGaps(limitedGaps);
 
-    logger.info('Gap skills inserted', { inserted_count: limitedGaps.length });
+    await deleteExistingGaps(user_id, run_id);
+    await insertGaps(user_id, run_id, uniqueGaps);
+
+    logger.info('Gap skills inserted', { inserted_count: uniqueGaps.length });
 
     const response: GapResponse = {
       user_id,
       run_id,
-      inserted_count: limitedGaps.length,
-      gaps: limitedGaps
+      inserted_count: uniqueGaps.length,
+      gaps: uniqueGaps
     };
 
     res.status(200).json(response);
