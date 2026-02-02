@@ -1,4 +1,4 @@
-import { getBackendBaseUrl } from './backendBaseUrl';
+const SUPABASE_URL = "https://ifnxriqbrvheqbtbdimc.supabase.co";
 
 const STORAGE_KEY = 'advisemi_guest_user_id';
 
@@ -8,8 +8,7 @@ export const getOrCreateGuestUserId = async (): Promise<string> => {
     return existing;
   }
 
-  const baseUrl = getBackendBaseUrl();
-  const res = await fetch(`${baseUrl}/session/guest`, {
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/session-guest`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({})

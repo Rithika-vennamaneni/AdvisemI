@@ -1,7 +1,8 @@
-// Backend integration: API client for FastAPI resume parser
+// Backend integration: API client for resume parser Edge Function
 
 import type { ResumeParseResponse } from '@/types/resumeParser';
-import { getBackendBaseUrl } from './backendBaseUrl';
+
+const SUPABASE_URL = "https://ifnxriqbrvheqbtbdimc.supabase.co";
 
 export class ResumeParserApiError extends Error {
   public status?: number;
@@ -15,9 +16,9 @@ export class ResumeParserApiError extends Error {
 
 export async function parseResumePdf(
   file: File,
-  opts?: { baseUrl?: string; signal?: AbortSignal; userId?: string; runId?: string; dreamRole?: string; term?: string }
+  opts?: { signal?: AbortSignal; userId?: string; runId?: string; dreamRole?: string; term?: string }
 ): Promise<ResumeParseResponse> {
-  // Backend integration: prepare multipart upload
+  // Prepare multipart upload
   const form = new FormData();
   form.append('file', file);
   if (opts?.userId) form.append('user_id', opts.userId);
@@ -25,11 +26,8 @@ export async function parseResumePdf(
   if (opts?.dreamRole) form.append('dream_role', opts.dreamRole);
   if (opts?.term) form.append('term', opts.term);
 
-  // Backend integration: allow runtime override via opts or use shared helper
-  const baseUrl = opts?.baseUrl ?? getBackendBaseUrl();
-
-  // Backend integration: call FastAPI POST /parse
-  const res = await fetch(`${baseUrl}/parse`, {
+  // Call Supabase Edge Function
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/parse-resume`, {
     method: 'POST',
     body: form,
     signal: opts?.signal,
@@ -46,9 +44,8 @@ export async function parseResumePdf(
     throw new ResumeParserApiError(`Resume parser request failed (${res.status})${detail}`, res.status);
   }
 
-  // Backend integration: parse structured JSON response
+  // Parse structured JSON response
   const data = (await res.json()) as ResumeParseResponse;
-  // Backend integration: console log for debugging
   console.log('Resume parser response:', data);
   return data;
 }

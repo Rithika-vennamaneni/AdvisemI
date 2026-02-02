@@ -1,4 +1,4 @@
-import { getRecommendationServiceUrl } from './backendBaseUrl';
+const SUPABASE_URL = "https://ifnxriqbrvheqbtbdimc.supabase.co";
 
 export class CourseRecommendationApiError extends Error {
   public status?: number;
@@ -38,11 +38,9 @@ export interface GenerateRecommendationsResponse {
 
 export async function generateCourseRecommendations(
   request: GenerateRecommendationsRequest,
-  opts?: { baseUrl?: string; signal?: AbortSignal }
+  opts?: { signal?: AbortSignal }
 ): Promise<GenerateRecommendationsResponse> {
-  const baseUrl = opts?.baseUrl ?? getRecommendationServiceUrl();
-
-  const res = await fetch(`${baseUrl}/course-recommendations/generate`, {
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/course-recommendations`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

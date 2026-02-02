@@ -1,4 +1,4 @@
-import { getBackendBaseUrl } from './backendBaseUrl';
+const SUPABASE_URL = "https://ifnxriqbrvheqbtbdimc.supabase.co";
 
 export class ProfileApiError extends Error {
   public status?: number;
@@ -16,8 +16,7 @@ type SaveProfileInput = {
 };
 
 export const saveProfile = async (input: SaveProfileInput, userId?: string): Promise<void> => {
-  const baseUrl = getBackendBaseUrl();
-  const res = await fetch(`${baseUrl}/profile`, {
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/profile`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
