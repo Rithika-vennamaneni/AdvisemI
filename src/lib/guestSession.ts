@@ -1,10 +1,6 @@
+import { getBackendBaseUrl } from './backendBaseUrl';
+
 const STORAGE_KEY = 'advisemi_guest_user_id';
-
-const DEFAULT_BACKEND_BASE_URL = 'http://localhost:8787';
-
-const getBackendBaseUrl = (): string => {
-  return import.meta.env.VITE_RESUME_PARSER_URL ?? DEFAULT_BACKEND_BASE_URL;
-};
 
 export const getOrCreateGuestUserId = async (): Promise<string> => {
   const existing = window.localStorage.getItem(STORAGE_KEY);

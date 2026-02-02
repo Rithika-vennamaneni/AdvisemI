@@ -1,8 +1,7 @@
 // Backend integration: API client for FastAPI resume parser
 
 import type { ResumeParseResponse } from '@/types/resumeParser';
-
-const DEFAULT_RESUME_PARSER_BASE_URL = 'http://localhost:8787';
+import { getBackendBaseUrl } from './backendBaseUrl';
 
 export class ResumeParserApiError extends Error {
   public status?: number;
@@ -26,9 +25,8 @@ export async function parseResumePdf(
   if (opts?.dreamRole) form.append('dream_role', opts.dreamRole);
   if (opts?.term) form.append('term', opts.term);
 
-  // Backend integration: allow runtime override via Vite env var.
-  const envBaseUrl = (import.meta as any)?.env?.VITE_RESUME_PARSER_URL as string | undefined;
-  const baseUrl = opts?.baseUrl ?? envBaseUrl ?? DEFAULT_RESUME_PARSER_BASE_URL;
+  // Backend integration: allow runtime override via opts or use shared helper
+  const baseUrl = opts?.baseUrl ?? getBackendBaseUrl();
 
   // Backend integration: call FastAPI POST /parse
   const res = await fetch(`${baseUrl}/parse`, {

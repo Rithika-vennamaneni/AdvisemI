@@ -1,3 +1,5 @@
+import { getBackendBaseUrl } from './backendBaseUrl';
+
 export class ProfileApiError extends Error {
   public status?: number;
 
@@ -7,13 +9,6 @@ export class ProfileApiError extends Error {
     this.status = status;
   }
 }
-
-const DEFAULT_BACKEND_BASE_URL = 'http://localhost:8787';
-
-const getBackendBaseUrl = (): string => {
-  const envBaseUrl = import.meta.env.VITE_RESUME_PARSER_URL as string | undefined;
-  return envBaseUrl ?? DEFAULT_BACKEND_BASE_URL;
-};
 
 type SaveProfileInput = {
   dream_role: string;

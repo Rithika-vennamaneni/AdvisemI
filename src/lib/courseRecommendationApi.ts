@@ -1,4 +1,4 @@
-const DEFAULT_RECOMMENDATION_SERVICE_BASE_URL = 'http://localhost:4000';
+import { getRecommendationServiceUrl } from './backendBaseUrl';
 
 export class CourseRecommendationApiError extends Error {
   public status?: number;
@@ -40,8 +40,7 @@ export async function generateCourseRecommendations(
   request: GenerateRecommendationsRequest,
   opts?: { baseUrl?: string; signal?: AbortSignal }
 ): Promise<GenerateRecommendationsResponse> {
-  const envBaseUrl = (import.meta as any)?.env?.VITE_RECOMMENDATION_SERVICE_URL as string | undefined;
-  const baseUrl = opts?.baseUrl ?? envBaseUrl ?? DEFAULT_RECOMMENDATION_SERVICE_BASE_URL;
+  const baseUrl = opts?.baseUrl ?? getRecommendationServiceUrl();
 
   const res = await fetch(`${baseUrl}/course-recommendations/generate`, {
     method: 'POST',

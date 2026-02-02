@@ -39,13 +39,11 @@ const sliderValueToLevel = (value: number): SkillLevel => {
   return SKILL_LEVELS[Math.round(value)] || 'Intermediate';
 };
 
-export interface SkillWithLevel extends Skill {
-  expertise_level?: string;
-}
+// Use Skill directly - expertise_level is now part of the Skill interface
 
 interface SkillCardProps {
-  skill: SkillWithLevel;
-  onUpdate: (id: string, updates: Partial<SkillWithLevel>) => void;
+  skill: Skill;
+  onUpdate: (id: string, updates: Partial<Skill>) => void;
   onRemove: (id: string) => void;
 }
 
@@ -55,7 +53,7 @@ export function SkillCard({ skill, onUpdate, onRemove }: SkillCardProps) {
   const [isAdjusted, setIsAdjusted] = useState(false);
   
   // Use expertise_level if set, otherwise derive from score
-  const currentLevel: SkillLevel = (skill.expertise_level as SkillLevel) || scoreToLevel(skill.score);
+  const currentLevel: SkillLevel = skill.expertise_level ?? scoreToLevel(skill.score);
   const sliderValue = levelToSliderValue(currentLevel);
 
   const handleLevelChange = (values: number[]) => {

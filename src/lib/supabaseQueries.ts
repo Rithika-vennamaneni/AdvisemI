@@ -3,17 +3,14 @@ import type { GapSkill, Course, Recommendation } from '@/types/database';
 
 export async function fetchGapSkills(
   userId: string,
-  runId: string | null = null
+  _runId: string | null = null
 ): Promise<GapSkill[]> {
-  let query = supabase
+  // Note: run_id column doesn't exist on gap_skills table yet
+  const query = supabase
     .from('gap_skills')
     .select('*')
     .eq('user_id', userId)
     .order('priority', { ascending: true });
-
-  if (runId) {
-    query = query.eq('run_id', runId);
-  }
 
   const { data, error } = await query;
 
@@ -30,9 +27,10 @@ export interface RecommendationWithCourse extends Recommendation {
 
 export async function fetchRecommendationsWithCourses(
   userId: string,
-  runId: string | null = null
+  _runId: string | null = null
 ): Promise<RecommendationWithCourse[]> {
-  let query = supabase
+  // Note: run_id column doesn't exist on recommendations table yet
+  const query = supabase
     .from('recommendations')
     .select(`
       *,
@@ -40,10 +38,6 @@ export async function fetchRecommendationsWithCourses(
     `)
     .eq('user_id', userId)
     .order('score', { ascending: false });
-
-  if (runId) {
-    query = query.eq('run_id', runId);
-  }
 
   const { data, error } = await query;
 
