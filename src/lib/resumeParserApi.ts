@@ -2,7 +2,7 @@
 
 import type { ResumeParseResponse } from '@/types/resumeParser';
 
-const SUPABASE_URL = "https://ifnxriqbrvheqbtbdimc.supabase.co";
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "https://ifnxriqbrvheqbtbdimc.supabase.co";
 
 export class ResumeParserApiError extends Error {
   public status?: number;
