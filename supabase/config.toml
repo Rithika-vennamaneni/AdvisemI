@@ -1,1 +1,7 @@
 project_id = "ifnxriqbrvheqbtbdimc"
+
+[functions.session-guest]
+verify_jwt = false
+
+[functions.parse-resume]
+verify_jwt = false

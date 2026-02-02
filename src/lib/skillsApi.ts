@@ -1,4 +1,4 @@
-import { getBackendBaseUrl } from './backendBaseUrl';
+const SUPABASE_URL = "https://ifnxriqbrvheqbtbdimc.supabase.co";
 
 export type SkillLevelUpdate = {
   skill_name: string;
@@ -16,8 +16,7 @@ export const updateSkillLevels = async (
   runId: string,
   updates: SkillLevelUpdate[]
 ): Promise<SkillUpdateResponse> => {
-  const baseUrl = getBackendBaseUrl();
-  const res = await fetch(`${baseUrl}/skills/update-levels`, {
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/skills-update-levels`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
