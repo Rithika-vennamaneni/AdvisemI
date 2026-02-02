@@ -52,7 +52,6 @@ export type Database = {
           created_at: string
           id: string
           raw_text: string
-          run_id: string | null
           type: string
           user_id: string
         }
@@ -60,7 +59,6 @@ export type Database = {
           created_at?: string
           id?: string
           raw_text: string
-          run_id?: string | null
           type: string
           user_id: string
         }
@@ -68,19 +66,10 @@ export type Database = {
           created_at?: string
           id?: string
           raw_text?: string
-          run_id?: string | null
           type?: string
           user_id?: string
         }
-        Relationships: [
-          {
-            foreignKeyName: "documents_run_id_fkey"
-            columns: ["run_id"]
-            isOneToOne: false
-            referencedRelation: "runs"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       gap_skills: {
         Row: {
@@ -88,7 +77,6 @@ export type Database = {
           id: string
           priority: number
           reason: string | null
-          run_id: string | null
           skill_name: string
           user_id: string
         }
@@ -97,7 +85,6 @@ export type Database = {
           id?: string
           priority: number
           reason?: string | null
-          run_id?: string | null
           skill_name: string
           user_id: string
         }
@@ -106,19 +93,10 @@ export type Database = {
           id?: string
           priority?: number
           reason?: string | null
-          run_id?: string | null
           skill_name?: string
           user_id?: string
         }
-        Relationships: [
-          {
-            foreignKeyName: "gap_skills_run_id_fkey"
-            columns: ["run_id"]
-            isOneToOne: false
-            referencedRelation: "runs"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       profiles: {
         Row: {
@@ -151,7 +129,6 @@ export type Database = {
           explanation: string | null
           id: string
           matched_gaps: Json
-          run_id: string | null
           score: number | null
           user_id: string
         }
@@ -161,7 +138,6 @@ export type Database = {
           explanation?: string | null
           id?: string
           matched_gaps?: Json
-          run_id?: string | null
           score?: number | null
           user_id: string
         }
@@ -171,7 +147,6 @@ export type Database = {
           explanation?: string | null
           id?: string
           matched_gaps?: Json
-          run_id?: string | null
           score?: number | null
           user_id?: string
         }
@@ -181,13 +156,6 @@ export type Database = {
             columns: ["course_id"]
             isOneToOne: false
             referencedRelation: "courses"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "recommendations_run_id_fkey"
-            columns: ["run_id"]
-            isOneToOne: false
-            referencedRelation: "runs"
             referencedColumns: ["id"]
           },
         ]
@@ -222,10 +190,10 @@ export type Database = {
       skills: {
         Row: {
           created_at: string
+          dream_role: string | null
           evidence: string | null
           expertise_level: string | null
           id: string
-          run_id: string | null
           score: number | null
           skill_name: string
           source: string
@@ -233,10 +201,10 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          dream_role?: string | null
           evidence?: string | null
           expertise_level?: string | null
           id?: string
-          run_id?: string | null
           score?: number | null
           skill_name: string
           source: string
@@ -244,24 +212,16 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          dream_role?: string | null
           evidence?: string | null
           expertise_level?: string | null
           id?: string
-          run_id?: string | null
           score?: number | null
           skill_name?: string
           source?: string
           user_id?: string
         }
-        Relationships: [
-          {
-            foreignKeyName: "skills_run_id_fkey"
-            columns: ["run_id"]
-            isOneToOne: false
-            referencedRelation: "runs"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
     }
     Views: {

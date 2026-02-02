@@ -82,10 +82,11 @@ export default function SkillsReview() {
     }
 
     const updates: SkillLevelUpdate[] = skills
-      .filter((skill) => skill.source === 'resume' && skill.expertise_level)
+      .filter((skill): skill is Skill & { expertise_level: NonNullable<Skill['expertise_level']> } => 
+        skill.source === 'resume' && skill.expertise_level != null)
       .map((skill) => ({
         skill_name: skill.skill_name,
-        expertise_level: skill.expertise_level as SkillLevelUpdate['expertise_level']
+        expertise_level: skill.expertise_level
       }));
 
     if (updates.length === 0) {

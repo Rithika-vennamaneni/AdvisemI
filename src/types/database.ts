@@ -23,6 +23,7 @@ export interface Skill {
   skill_name: string;
   score: number; // 0-1 float
   evidence: string;
+  expertise_level?: 'Beginner' | 'Intermediate' | 'Advanced' | 'Expert' | null;
   created_at: string;
 }
 
