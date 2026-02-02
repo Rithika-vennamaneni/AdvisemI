@@ -11,18 +11,17 @@ import { useToast } from '@/hooks/use-toast';
 import { fetchGapSkills, fetchRecommendationsWithCourses, fetchProfile, parseTerm } from '@/lib/supabaseQueries';
 import { generateCourseRecommendations } from '@/lib/courseRecommendationApi';
 import type { RecommendationWithCourse } from '@/lib/supabaseQueries';
+import { getStoredGuestUserId } from '@/lib/guestSession';
 
 const MAX_COURSES = 4;
 const MAX_CREDITS = 16;
-
-const STORAGE_KEY = 'advisemi_guest_user_id';
 
 export default function Planner() {
   const { toast } = useToast();
   const [searchParams] = useSearchParams();
   
-  // Get user_id and run_id from URL params or localStorage
-  const userId = searchParams.get('user_id') ?? localStorage.getItem(STORAGE_KEY) ?? '';
+  // Get user_id and run_id from URL params or localStorage (validated UUID)
+  const userId = searchParams.get('user_id') ?? getStoredGuestUserId() ?? '';
   const runId = searchParams.get('run_id') ?? '';
   
   

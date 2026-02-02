@@ -2,8 +2,26 @@ const SUPABASE_URL = "https://ifnxriqbrvheqbtbdimc.supabase.co";
 
 const STORAGE_KEY = 'advisemi_guest_user_id';
 
+// UUID v4 format validation
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const isValidUuid = (value: string): boolean => UUID_REGEX.test(value);
+
+export const getStoredGuestUserId = (): string | null => {
+  const stored = window.localStorage.getItem(STORAGE_KEY);
+  // Only return if it's a valid UUID (not a legacy placeholder like "user-demo-123")
+  if (stored && isValidUuid(stored)) {
+    return stored;
+  }
+  // Clear invalid values
+  if (stored) {
+    window.localStorage.removeItem(STORAGE_KEY);
+  }
+  return null;
+};
+
 export const getOrCreateGuestUserId = async (): Promise<string> => {
-  const existing = window.localStorage.getItem(STORAGE_KEY);
+  const existing = getStoredGuestUserId();
   if (existing) {
     return existing;
   }
