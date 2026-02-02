@@ -12,20 +12,10 @@
  */
 
 const isDev = (): boolean => {
-  // Check multiple indicators for development mode
-  if (typeof window !== 'undefined') {
-    const hostname = window.location.hostname;
-    // Localhost or 127.0.0.1 indicates development
-    if (hostname === 'localhost' || hostname === '127.0.0.1') {
-      return true;
-    }
-  }
-  // Vite's DEV flag as fallback
-  try {
-    return import.meta.env.DEV === true;
-  } catch {
-    return false;
-  }
+  // Pure runtime check - only localhost/127.0.0.1 is development
+  if (typeof window === 'undefined') return false;
+  const hostname = window.location.hostname;
+  return hostname === 'localhost' || hostname === '127.0.0.1';
 };
 
 export const getBackendBaseUrl = (): string => {
