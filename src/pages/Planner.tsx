@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Header } from '@/components/layout/Header';
 import { CareerProgress } from '@/components/planner/CareerProgress';
 import { CourseRecommendationCard } from '@/components/planner/CourseRecommendationCard';
@@ -14,12 +15,17 @@ import type { RecommendationWithCourse } from '@/lib/supabaseQueries';
 const MAX_COURSES = 4;
 const MAX_CREDITS = 16;
 
-// TODO: Replace with actual user ID from auth
-const MOCK_USER_ID = 'user-demo-123';
-const MOCK_RUN_ID = 'run-demo-123'; // TODO: Get from latest run or create one
+const STORAGE_KEY = 'advisemi_guest_user_id';
 
 export default function Planner() {
   const { toast } = useToast();
+  const [searchParams] = useSearchParams();
+  
+  // Get user_id and run_id from URL params or localStorage
+  const userId = searchParams.get('user_id') ?? localStorage.getItem(STORAGE_KEY) ?? '';
+  const runId = searchParams.get('run_id') ?? '';
+  
+  
   const [plannedCourseIds, setPlannedCourseIds] = useState<string[]>([]);
   const [boostedSkills, setBoostedSkills] = useState<string[]>([]);
   const [skillScores, setSkillScores] = useState<Record<string, number>>({});
@@ -37,12 +43,22 @@ export default function Planner() {
   }, []);
 
   const loadData = async () => {
+    if (!userId) {
+      toast({
+        title: 'No user session',
+        description: 'Please start from the beginning and upload your resume.',
+        variant: 'destructive',
+      });
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
     try {
       const [gapSkillsData, recommendationsData, profileData] = await Promise.all([
-        fetchGapSkills(MOCK_USER_ID, MOCK_RUN_ID),
-        fetchRecommendationsWithCourses(MOCK_USER_ID, MOCK_RUN_ID),
-        fetchProfile(MOCK_USER_ID),
+        fetchGapSkills(userId, runId || undefined),
+        fetchRecommendationsWithCourses(userId, runId || undefined),
+        fetchProfile(userId),
       ]);
 
       setGapSkills(gapSkillsData);
@@ -91,8 +107,8 @@ export default function Planner() {
     setIsGenerating(true);
     try {
       await generateCourseRecommendations({
-        user_id: MOCK_USER_ID,
-        run_id: MOCK_RUN_ID,
+        user_id: userId,
+        run_id: runId,
         year: termInfo.year,
         semester: termInfo.semester,
         limit: 20,
@@ -104,7 +120,7 @@ export default function Planner() {
       });
 
       // Reload recommendations
-      const newRecommendations = await fetchRecommendationsWithCourses(MOCK_USER_ID, MOCK_RUN_ID);
+      const newRecommendations = await fetchRecommendationsWithCourses(userId, runId || undefined);
       setRecommendations(newRecommendations);
     } catch (error) {
       console.error('Failed to generate recommendations:', error);

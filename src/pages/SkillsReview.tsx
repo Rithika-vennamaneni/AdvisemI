@@ -36,7 +36,7 @@ export default function SkillsReview() {
         if (!trimmed) continue;
         skills.push({
           id: `resume-${category}-${trimmed.toLowerCase().replace(/\s+/g, '-')}`,
-          user_id: 'user-demo-123',
+          user_id: userId ?? '',
           source: 'resume',
           skill_name: trimmed,
           score: 0.6,
@@ -110,7 +110,7 @@ export default function SkillsReview() {
     
     const skill: Skill = {
       id: `skill-new-${Date.now()}`,
-      user_id: 'user-demo-123',
+      user_id: userId ?? '',
       source: 'resume',
       skill_name: newSkillName.trim(),
       score: 0.5,
@@ -221,7 +221,7 @@ export default function SkillsReview() {
             <Button variant="outline" onClick={handleSaveLevels}>
               Save Skill Levels
             </Button>
-            <Button size="lg" onClick={() => navigate('/planner')} className="rounded-full px-8 gap-2">
+            <Button size="lg" onClick={() => navigate(`/planner?user_id=${userId}&run_id=${runId}`)} className="rounded-full px-8 gap-2">
             See Recommended Courses
             <ArrowRight className="w-4 h-4" />
           </Button>
