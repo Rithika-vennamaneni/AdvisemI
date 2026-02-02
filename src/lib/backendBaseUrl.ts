@@ -5,20 +5,39 @@
  * 2. VITE_API_BASE_URL (general API base)
  * 3. window.location.origin in production
  * 4. http://localhost:8787 in development only
+ * 
+ * Note: Since Supabase/Lovable doesn't support VITE_* variables in production,
+ * this will fall back to origin. If you need a separate backend service,
+ * consider using Supabase Edge Functions instead.
  */
 
 const isDev = (): boolean => {
-  return import.meta.env.DEV === true;
+  // Check multiple indicators for development mode
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    // Localhost or 127.0.0.1 indicates development
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return true;
+    }
+  }
+  // Vite's DEV flag as fallback
+  try {
+    return import.meta.env.DEV === true;
+  } catch {
+    return false;
+  }
 };
 
 export const getBackendBaseUrl = (): string => {
+  // Try environment variables first (works in dev with .env file)
   const resumeParserUrl = import.meta.env.VITE_RESUME_PARSER_URL as string | undefined;
   if (resumeParserUrl) return resumeParserUrl;
 
   const apiBaseUrl = import.meta.env.VITE_API_BASE_URL as string | undefined;
   if (apiBaseUrl) return apiBaseUrl;
 
-  // In production, use the same origin (assumes backend is served from same domain or proxied)
+  // In production (non-localhost), use the same origin
+  // This assumes the backend is served from the same domain or proxied
   if (!isDev()) {
     return window.location.origin;
   }
