@@ -42,7 +42,7 @@ const callAI = async (
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: "google/gemini-2.0-flash",
+        model: "google/gemini-3-flash-preview",
         messages: [{ role: "user", content: prompt }],
         max_tokens: 400,
         temperature: 0.2,
@@ -83,7 +83,7 @@ const extractTextFromPdfWithAI = async (
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: "google/gemini-2.0-flash",
+        model: "google/gemini-3-flash-preview",
         messages: [
           {
             role: "user",
