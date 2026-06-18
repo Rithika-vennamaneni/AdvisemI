@@ -1,73 +1,56 @@
-# Welcome to your Lovable project
+# AdvisemI
 
-## Project info
+> "An intelligent system that maps career skill gaps to the right courses, instantly."
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+🏆 **Winner — Lovable Prize, Keywords AI Hackathon @ UIUC (2026)**
 
-## How can I edit this code?
+AdvisemI bridges the gap between job market demands and university coursework. 
+Students paste a job description, and the system identifies which required skills 
+are missing from their profile and recommends specific UIUC courses to close those gaps.
 
-There are several ways of editing your application.
+---
 
-**Use Lovable**
+## The Problem
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+Job descriptions list dozens of skills, but it's rarely clear which ones actually 
+matter, which ones you already have under a different name, and what to learn next. 
+Course catalogs are large and disconnected from real job requirements. AdvisemI 
+connects these two worlds in a practical, explainable way.
 
-Changes made via Lovable will be committed automatically to this repo.
+## How It Works
 
-**Use your preferred IDE**
+The system runs as a modular backend-first pipeline:
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+1. **Ingestion** — Resumes and job descriptions are parsed and stored separately
+2. **Skill extraction** — Skills are extracted from both, preserving context
+3. **Gap analysis** — Resume skills are compared against job requirements using 
+   AI semantic matching to handle synonyms and partial coverage
+4. **Course recommendation** — Gap skills are matched against the UIUC Course 
+   Explorer API and ranked by alignment
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+AI is used only where it adds clear value (semantic skill matching). Every other 
+step is deterministic and testable.
 
-Follow these steps:
+## Tech Stack
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+- **Frontend:** React, TypeScript, Vite, Tailwind CSS, shadcn/ui (via Lovable)
+- **Backend:** Node.js, TypeScript, Python
+- **Database:** Supabase (PostgreSQL)
+- **APIs:** Keywords AI, Adzuna (job listings), UIUC Course Explorer
+- **AI-assisted development:** Lovable, Cursor
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+## Key Design Decisions
 
-# Step 3: Install the necessary dependencies.
-npm i
+- Kept the pipeline modular and idempotent — each step can be safely rerun 
+  without corrupting data
+- Used AI for semantic matching only, not as a black box over the full pipeline
+- Designed for transparency: every recommendation is traceable to a specific 
+  skill gap
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
-```
+## Demo
 
-**Edit a file directly in GitHub**
+[![AdvisemI Demo](https://img.youtube.com/vi/Enm_k7MkJsY/0.jpg)](https://www.youtube.com/watch?v=Enm_k7MkJsY)
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+---
 
-**Use GitHub Codespaces**
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
